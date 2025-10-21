@@ -1,64 +1,88 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
+// JWT utilities
+function getJWTSecret() {
+  const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+  if (!secret) {
+    throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+  }
+  return new TextEncoder().encode(secret);
+}
+function createJWTSecretErrorResponse() {
+  return new Response(JSON.stringify({
+    error: "JWT secret configuration error",
+    code: "JWT_SECRET_ERROR"
+  }), {
+    status: 500,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
+/**
+ * Create a standardized error response
+ */ function createErrorResponse(message, status = 500, code, details) {
+  const errorResponse = {
+    error: message
+  };
+  if (code) {
+    errorResponse.code = code;
+  }
+  if (details && details.length > 0) {
+    errorResponse.details = details;
+  }
+  return new Response(JSON.stringify(errorResponse), {
+    status,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-const JWT_SECRET = Deno.env.get("CUSTOM_JWT_SECRET");
+// Pagination configuration from environment (with safe fallbacks)
+const DEFAULT_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("DEFAULT_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
+const MAX_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("MAX_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 100;
+})();
 serve(async (req)=>{
   if (req.method !== "GET") {
-    return new Response(JSON.stringify({
-      error: "Method not allowed"
-    }), {
-      status: 405,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Method not allowed", 405);
   }
   try {
     // Validate Admin-Token only
     const adminToken = req.headers.get("Admin-Token");
     if (!adminToken) {
-      return new Response(JSON.stringify({
-        error: "Admin-Token header required"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Admin-Token header required", 401);
     }
-    const secret = new TextEncoder().encode(JWT_SECRET);
+    let secret;
+    try {
+      secret = getJWTSecret();
+    } catch (error) {
+      return createJWTSecretErrorResponse();
+    }
     const { payload } = await jwtVerify(adminToken, secret, {
       algorithms: [
         "HS256"
       ]
     });
     if (payload.role !== "admin") {
-      return new Response(JSON.stringify({
-        error: "Admin access required"
-      }), {
-        status: 403,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Admin access required", 403);
     }
     // Get URL params
     const url = new URL(req.url);
     const page = parseInt(url.searchParams.get("page") || "1");
-    const limit = parseInt(url.searchParams.get("limit") || "20");
+    const reqLimit = parseInt(url.searchParams.get("limit") || "");
+    const limit = Number.isFinite(reqLimit) && reqLimit > 0 ? reqLimit : DEFAULT_PAGE_SIZE;
     const status = url.searchParams.get("status"); // Filter by subscription_status
     const region = url.searchParams.get("region"); // Filter by region
     // Validate pagination
-    if (page < 1 || limit < 1 || limit > 100) {
-      return new Response(JSON.stringify({
-        error: "Invalid pagination parameters"
-      }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+    if (page < 1 || limit < 1 || limit > MAX_PAGE_SIZE) {
+      return createErrorResponse("Invalid pagination parameters", 400);
     }
     const offset = (page - 1) * limit;
     // Build query
@@ -89,10 +113,24 @@ serve(async (req)=>{
       console.error("Users fetch error:", usersError);
       throw new Error("Failed to fetch users");
     }
-    // Get payment totals for each user
-    const usersWithPayments = await Promise.all((users || []).map(async (user)=>{
-      const { data: payments } = await supabase.from("crm_payment").select("amount").eq("user_id", user.user_id);
-      const totalSpent = payments?.reduce((sum, p)=>sum + Number(p.amount), 0) || 0;
+    // Get payment totals for all users in a single query (fix N+1 problem)
+    // Before: N+1 queries (1 for users + N for each user's payments)
+    // After: 2 queries total (1 for users + 1 for all payments)
+    const userIds = (users || []).map((user)=>user.user_id);
+    const { data: allPayments, error: paymentsError } = await supabase.from("crm_payment").select("user_id, amount").in("user_id", userIds);
+    if (paymentsError) {
+      console.error("Payments fetch error:", paymentsError);
+      throw new Error("Failed to fetch payment data");
+    }
+    // Group payments by user_id and calculate totals
+    const paymentTotals = new Map();
+    allPayments?.forEach((payment)=>{
+      const currentTotal = paymentTotals.get(payment.user_id) || 0;
+      paymentTotals.set(payment.user_id, currentTotal + Number(payment.amount));
+    });
+    // Map users with their payment totals
+    const usersWithPayments = (users || []).map((user)=>{
+      const totalSpent = paymentTotals.get(user.user_id) || 0;
       return {
         user_id: user.user_id,
         email: user.email,
@@ -108,7 +146,7 @@ serve(async (req)=>{
           full_name: user.crm_partner.full_name
         } : null
       };
-    }));
+    });
     // Calculate pagination info
     const totalUsers = count || 0;
     const totalPages = Math.ceil(totalUsers / limit);
@@ -136,44 +174,15 @@ serve(async (req)=>{
     });
   } catch (error) {
     if (error?.name === "JWTExpired") {
-      return new Response(JSON.stringify({
-        error: "Admin-Token has expired"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Admin-Token has expired", 401);
     }
     if (error?.name === "JWSSignatureVerificationFailed") {
-      return new Response(JSON.stringify({
-        error: "Invalid Admin-Token signature"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Invalid Admin-Token signature", 401);
     }
     if (error?.code === "ERR_JWS_INVALID") {
-      return new Response(JSON.stringify({
-        error: "Invalid JWT format"
-      }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Invalid JWT format", 400);
     }
     console.error("Unexpected error:", error);
-    return new Response(JSON.stringify({
-      error: "Internal server error",
-      message: error instanceof Error ? error.message : "Unknown error"
-    }), {
-      status: 500,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Internal server error", 500);
   }
 });

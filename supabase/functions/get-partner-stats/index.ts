@@ -1,60 +1,74 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
+// JWT utilities
+function getJWTSecret() {
+  const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+  if (!secret) {
+    throw new Error("JWT_SECRET environment variable is not set");
+  }
+  return new TextEncoder().encode(secret);
+}
+function createJWTSecretErrorResponse() {
+  return new Response(JSON.stringify({
+    error: "JWT secret configuration error",
+    code: "JWT_SECRET_ERROR"
+  }), {
+    status: 500,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
+/**
+ * Create a standardized error response
+ */ function createErrorResponse(message, status = 500, code, details) {
+  const errorResponse = {
+    error: message
+  };
+  if (code) {
+    errorResponse.code = code;
+  }
+  if (details && details.length > 0) {
+    errorResponse.details = details;
+  }
+  return new Response(JSON.stringify(errorResponse), {
+    status,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-const JWT_SECRET = Deno.env.get("CUSTOM_JWT_SECRET");
 serve(async (req)=>{
   if (req.method !== "GET") {
-    return new Response(JSON.stringify({
-      error: "Method not allowed"
-    }), {
-      status: 405,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Method not allowed", 405);
   }
   try {
     // Validate Partner-Token only
     const partnerToken = req.headers.get("Partner-Token");
     if (!partnerToken) {
-      return new Response(JSON.stringify({
-        error: "Partner-Token header required"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Partner-Token header required", 401);
     }
-    const secret = new TextEncoder().encode(JWT_SECRET);
+    let secret;
+    try {
+      secret = getJWTSecret();
+    } catch (error) {
+      return createJWTSecretErrorResponse();
+    }
     const { payload } = await jwtVerify(partnerToken, secret, {
       algorithms: [
         "HS256"
       ]
     });
     if (payload.role !== "partner") {
-      return new Response(JSON.stringify({
-        error: "Partner access required"
-      }), {
-        status: 403,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Partner access required", 403);
     }
     const partnerId = payload.sub;
     // Get partner details
     const { data: partner, error: partnerError } = await supabase.from("crm_partner").select("email, full_name, commission_percent, is_active, created_at, total_revenue, total_converted").eq("id", partnerId).single();
     if (partnerError || !partner) {
-      return new Response(JSON.stringify({
-        error: "Partner not found"
-      }), {
-        status: 404,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Partner not found", 404);
     }
     // Get user stats
     const { data: users, error: usersError } = await supabase.from("crm_user_metadata").select("subscription_status, converted_at, created_at, region, user_id").eq("crm_partner_id", partnerId);
@@ -130,44 +144,15 @@ serve(async (req)=>{
     });
   } catch (error) {
     if (error?.name === "JWTExpired") {
-      return new Response(JSON.stringify({
-        error: "Partner-Token has expired"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Partner-Token has expired", 401);
     }
     if (error?.name === "JWSSignatureVerificationFailed") {
-      return new Response(JSON.stringify({
-        error: "Invalid Partner-Token signature"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Invalid Partner-Token signature", 401);
     }
     if (error?.code === "ERR_JWS_INVALID") {
-      return new Response(JSON.stringify({
-        error: "Invalid JWT format"
-      }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Invalid JWT format", 400);
     }
     console.error("Unexpected error:", JSON.stringify(error, null, 2));
-    return new Response(JSON.stringify({
-      error: "Internal server error",
-      message: error instanceof Error ? error.message : "Unknown error"
-    }), {
-      status: 500,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Internal server error", 500);
   }
 });

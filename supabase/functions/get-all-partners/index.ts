@@ -1,72 +1,121 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
+import { z } from "https://esm.sh/zod@3.22.4";
+// JWT utilities
+function getJWTSecret() {
+  const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+  if (!secret) {
+    throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+  }
+  return new TextEncoder().encode(secret);
+}
+function createJWTSecretErrorResponse() {
+  return new Response(JSON.stringify({
+    error: "JWT secret configuration error",
+    code: "JWT_SECRET_ERROR"
+  }), {
+    status: 500,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
+/**
+ * Create a standardized error response
+ */ function createErrorResponse(message, status = 500, code, details) {
+  const errorResponse = {
+    error: message
+  };
+  if (code) {
+    errorResponse.code = code;
+  }
+  if (details && details.length > 0) {
+    errorResponse.details = details;
+  }
+  return new Response(JSON.stringify(errorResponse), {
+    status,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
+}
+/**
+ * Create a validation error response from Zod errors
+ */ function createValidationErrorResponse(zodError, status = 400) {
+  const details = zodError.errors.map((error)=>({
+      field: error.path.join("."),
+      message: error.message
+    }));
+  return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
+}
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-const JWT_SECRET = Deno.env.get("CUSTOM_JWT_SECRET");
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("DEFAULT_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
+const MAX_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("MAX_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 100;
+})();
+// Input validation schema for query parameters
+const getPartnersQuerySchema = z.object({
+  page: z.string().optional().transform((val)=>{
+    const parsed = parseInt(val || "1");
+    return isNaN(parsed) || parsed < 1 ? 1 : parsed;
+  }),
+  page_size: z.string().optional().transform((val)=>{
+    const parsed = parseInt(val || `${DEFAULT_PAGE_SIZE}`);
+    if (isNaN(parsed) || parsed < 1) return DEFAULT_PAGE_SIZE;
+    if (parsed > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
+    return parsed;
+  }),
+  sort_by: z.enum([
+    "revenue",
+    "added",
+    "converted",
+    "created"
+  ]).optional().default("created")
+});
 serve(async (req)=>{
   if (req.method !== "GET") {
-    return new Response(JSON.stringify({
-      error: "Method not allowed"
-    }), {
-      status: 405,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Method not allowed", 405);
   }
   try {
     // === Auth ===
     const adminToken = req.headers.get("Admin-Token");
     if (!adminToken) {
-      return new Response(JSON.stringify({
-        error: "Admin-Token required"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Admin-Token required", 401);
     }
-    const secret = new TextEncoder().encode(JWT_SECRET);
+    let secret;
+    try {
+      secret = getJWTSecret();
+    } catch (error) {
+      return createJWTSecretErrorResponse();
+    }
     const { payload } = await jwtVerify(adminToken, secret, {
       algorithms: [
         "HS256"
       ]
     });
     if (payload.role !== "admin") {
-      return new Response(JSON.stringify({
-        error: "Admin only"
-      }), {
-        status: 403,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Admin only", 403);
     }
-    // === Parse query params ===
+    // === Parse and validate query params ===
     const url = new URL(req.url);
-    const page = Math.max(1, parseInt(url.searchParams.get("page") || "1"));
-    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(url.searchParams.get("page_size") || `${DEFAULT_PAGE_SIZE}`)));
-    const sortBy = url.searchParams.get("sort_by") || "created";
-    // Validate sort_by
-    const validSorts = [
-      "revenue",
-      "added",
-      "converted",
-      "created"
-    ];
-    if (!validSorts.includes(sortBy)) {
-      return new Response(JSON.stringify({
-        error: `sort_by must be one of: ${validSorts.join(", ")}`
-      }), {
-        status: 400,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+    const queryParams = {
+      page: url.searchParams.get("page") || undefined,
+      page_size: url.searchParams.get("page_size") || undefined,
+      sort_by: url.searchParams.get("sort_by") || undefined
+    };
+    const validationResult = getPartnersQuerySchema.safeParse(queryParams);
+    if (!validationResult.success) {
+      return createErrorResponse("Invalid query parameters", 400, "VALIDATION_ERROR", validationResult.error.issues.map((issue)=>({
+          field: issue.path.join("."),
+          message: issue.message
+        })));
     }
+    const { page, page_size: pageSize, sort_by: sortBy } = validationResult.data;
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
     // === Build query ===
@@ -136,22 +185,8 @@ serve(async (req)=>{
   } catch (error) {
     console.error("Error:", error);
     if (error?.name === "JWTExpired" || error?.name === "JWSSignatureVerificationFailed") {
-      return new Response(JSON.stringify({
-        error: "Invalid Admin-Token"
-      }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+      return createErrorResponse("Invalid Admin-Token", 401);
     }
-    return new Response(JSON.stringify({
-      error: "Internal error"
-    }), {
-      status: 500,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
+    return createErrorResponse("Internal error", 500);
   }
 });
