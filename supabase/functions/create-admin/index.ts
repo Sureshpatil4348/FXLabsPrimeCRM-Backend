@@ -55,9 +55,9 @@ function createErrorResponse(
 }
 // Utility: Zod validation errors
 function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.errors.map((error) => ({
-        field: error.path.join("."),
-        message: error.message,
+    const details = zodError.issues.map((issue: any) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
     return createErrorResponse(
         "Validation error",
@@ -130,7 +130,11 @@ serve(async (req) => {
             .select("id, password_hash")
             .eq("id", currentAdminId)
             .single();
-        if (fetchError || !currentAdmin) {
+        if (fetchError) {
+            console.error("Database error fetching current admin:", fetchError);
+            return createErrorResponse("Database error occurred", 500);
+        }
+        if (!currentAdmin) {
             return createErrorResponse("Current admin not found", 404);
         }
         // Verify the current admin's password
@@ -177,6 +181,17 @@ serve(async (req) => {
             .select("email, full_name")
             .single();
         if (insertError) {
+            // Check for Postgres unique constraint violations (email already exists)
+            if (
+                insertError.code === "23505" ||
+                (insertError.message &&
+                    (insertError.message.toLowerCase().includes("email") ||
+                        insertError.message.toLowerCase().includes("unique") ||
+                        insertError.message.toLowerCase().includes("key")))
+            ) {
+                console.error("Email uniqueness violation:", insertError);
+                return createErrorResponse("Email already exists", 409);
+            }
             console.error("Insert error:", insertError);
             return createErrorResponse("Failed to create admin", 500);
         }

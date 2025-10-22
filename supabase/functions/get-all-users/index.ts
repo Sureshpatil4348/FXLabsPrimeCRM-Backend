@@ -81,18 +81,29 @@ serve(async (req) => {
         }
         // Get URL params
         const url = new URL(req.url);
-        const page = parseInt(url.searchParams.get("page") || "1");
-        const reqLimit = parseInt(url.searchParams.get("limit") || "");
+        const rawPage = url.searchParams.get("page");
+        const rawLimit = url.searchParams.get("limit");
+
+        // Parse and validate page
+        const parsedPage = rawPage ? Number(rawPage) : 1;
+        const page =
+            Number.isFinite(parsedPage) && parsedPage >= 1
+                ? Math.floor(parsedPage)
+                : 1; // Normalize invalid page to 1
+
+        // Parse and validate limit
+        const parsedLimit = rawLimit ? Number(rawLimit) : DEFAULT_PAGE_SIZE;
         const limit =
-            Number.isFinite(reqLimit) && reqLimit > 0
-                ? reqLimit
-                : DEFAULT_PAGE_SIZE;
+            Number.isFinite(parsedLimit) &&
+            parsedLimit >= 1 &&
+            parsedLimit <= MAX_PAGE_SIZE
+                ? Math.floor(parsedLimit)
+                : parsedLimit > MAX_PAGE_SIZE
+                ? MAX_PAGE_SIZE // Cap at max
+                : DEFAULT_PAGE_SIZE; // Default for invalid values
+
         const status = url.searchParams.get("status"); // Filter by subscription_status
         const region = url.searchParams.get("region"); // Filter by region
-        // Validate pagination
-        if (page < 1 || limit < 1 || limit > MAX_PAGE_SIZE) {
-            return createErrorResponse("Invalid pagination parameters", 400);
-        }
         const offset = (page - 1) * limit;
         // Build query
         let query = supabase

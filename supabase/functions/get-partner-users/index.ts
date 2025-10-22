@@ -6,7 +6,7 @@ import { z } from "https://esm.sh/zod@3.22.4";
 function getJWTSecret() {
     const secret = Deno.env.get("CUSTOM_JWT_SECRET");
     if (!secret) {
-        throw new Error("JWT_SECRET environment variable is not set");
+        throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
     }
     return new TextEncoder().encode(secret);
 }
@@ -46,9 +46,9 @@ function createJWTSecretErrorResponse() {
 /**
  * Create a validation error response from Zod errors
  */ function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.errors.map((error) => ({
-        field: error.path.join("."),
-        message: error.message,
+    const details = zodError.issues.map((issue: any) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
     return createErrorResponse(
         "Validation error",
@@ -181,7 +181,9 @@ serve(async (req) => {
                     email: partner.email,
                     full_name: partner.full_name,
                     commission_percent: partner.commission_percent,
-                    total_revenue: Number(partner.total_revenue.toFixed(2)),
+                    total_revenue: Number(
+                        Number(partner.total_revenue ?? 0).toFixed(2)
+                    ),
                     total_converted: partner.total_converted,
                     is_active: partner.is_active,
                 };

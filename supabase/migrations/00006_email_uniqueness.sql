@@ -23,6 +23,9 @@ ALTER COLUMN email TYPE citext;
 
 -- Add unique constraint on crm_user_metadata.email (citext handles case-insensitivity)
 -- This prevents duplicate user accounts with different email cases
+-- Drop constraint if it exists first to make migration idempotent
+ALTER TABLE public.crm_user_metadata
+DROP CONSTRAINT IF EXISTS crm_user_metadata_email_key;
 ALTER TABLE public.crm_user_metadata
 ADD CONSTRAINT crm_user_metadata_email_key UNIQUE (email);
 

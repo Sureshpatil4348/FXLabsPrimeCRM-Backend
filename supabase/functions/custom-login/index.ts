@@ -3,6 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.22.4";
 import { SignJWT } from "https://esm.sh/jose@4.14.4";
 import { compareSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+// Dummy hash for timing attack prevention (bcrypt hash of random string)
+const DUMMY_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewfBPj6fM9Kbq";
+
 // Utility: Get JWT secret
 function getJWTSecret() {
     const secret = Deno.env.get("CUSTOM_JWT_SECRET");
@@ -46,9 +49,9 @@ function createErrorResponse(
 }
 // Utility: Zod validation errors
 function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.errors.map((error) => ({
-        field: error.path.join("."),
-        message: error.message,
+    const details = zodError.issues.map((issue: any) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
     return createErrorResponse(
         "Validation error",
@@ -99,27 +102,23 @@ serve(async (req) => {
             .select(selectColumns)
             .eq("email", validated.email)
             .single();
-        if (error || !user) {
-            // Normalize to avoid user enumeration
+
+        // Always perform password verification for timing attack prevention
+        const passwordHash = user?.password_hash || DUMMY_HASH;
+        const isValidPassword = compareSync(validated.password, passwordHash);
+
+        if (error || !user || !isValidPassword) {
+            // Return same response for invalid credentials, missing user, or wrong password
             return createErrorResponse(
                 "Invalid credentials",
                 401,
                 "INVALID_CREDENTIALS"
             );
         }
-        // Check partner status
+
+        // Check partner status only after successful authentication
         if (validated.role === "partner" && !user.is_active) {
             return createErrorResponse("Account is inactive", 403);
-        }
-        // Verify password (bcrypt compare)
-        const isValid = compareSync(validated.password, user.password_hash);
-        if (!isValid) {
-            // Same response as missing user to avoid enumeration
-            return createErrorResponse(
-                "Invalid credentials",
-                401,
-                "INVALID_CREDENTIALS"
-            );
         }
         // Generate JWT
         let secret;

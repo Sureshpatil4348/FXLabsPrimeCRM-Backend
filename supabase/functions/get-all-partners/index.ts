@@ -46,9 +46,9 @@ function createJWTSecretErrorResponse() {
 /**
  * Create a validation error response from Zod errors
  */ function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.errors.map((error) => ({
-        field: error.path.join("."),
-        message: error.message,
+    const details = zodError.issues.map((issue: any) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
     return createErrorResponse(
         "Validation error",
@@ -191,7 +191,7 @@ serve(async (req) => {
                     email: p.email,
                     full_name: p.full_name,
                     commission_percent: p.commission_percent,
-                    total_revenue: parseFloat(p.total_revenue),
+                    total_revenue: parseFloat(p.total_revenue ?? "0"),
                     total_added: p.total_added,
                     total_converted: p.total_converted,
                     created_at: p.created_at,

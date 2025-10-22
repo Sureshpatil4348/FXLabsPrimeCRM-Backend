@@ -54,9 +54,9 @@ function createErrorResponse(
 }
 // Utility: Zod validation errors
 function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.errors.map((error) => ({
-        field: error.path.join("."),
-        message: error.message,
+    const details = zodError.issues.map((issue: any) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
     return createErrorResponse(
         "Validation error",

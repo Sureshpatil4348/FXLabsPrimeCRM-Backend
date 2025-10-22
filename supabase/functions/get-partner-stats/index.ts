@@ -70,6 +70,9 @@ serve(async (req) => {
         if (payload.role !== "partner") {
             return createErrorResponse("Partner access required", 403);
         }
+        if (!payload.sub) {
+            return createErrorResponse("Missing subject in token", 401);
+        }
         const partnerId = payload.sub;
         // Get partner details
         const { data: partner, error: partnerError } = await supabase
@@ -81,6 +84,9 @@ serve(async (req) => {
             .single();
         if (partnerError || !partner) {
             return createErrorResponse("Partner not found", 404);
+        }
+        if (!partner.is_active) {
+            return createErrorResponse("Partner is inactive", 403);
         }
         // Get user stats
         const { data: users, error: usersError } = await supabase
@@ -172,7 +178,9 @@ serve(async (req) => {
                     commission_percent: partner.commission_percent,
                     is_active: partner.is_active,
                     joined_at: partner.created_at,
-                    total_revenue: Number(Number(partner.total_revenue).toFixed(2)),
+                    total_revenue: Number(
+                        Number(partner.total_revenue).toFixed(2)
+                    ),
                     total_converted: partner.total_converted,
                 },
                 users: {
