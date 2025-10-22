@@ -31,8 +31,13 @@ function createJWTSecretErrorResponse() {
     );
 }
 // Utility: Standard error response
-function createErrorResponse(message, status = 500, code = null, details = []) {
-    const errorResponse = {
+function createErrorResponse(
+    message: string,
+    status: number = 500,
+    code: string | null = null,
+    details: any[] = []
+) {
+    const errorResponse: any = {
         error: message,
     };
     if (code) {
@@ -93,6 +98,8 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(adminToken, secret, {
             algorithms: ["HS256"],
+            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "admin") {
             return createErrorResponse("Admin access required", 403);
@@ -106,7 +113,16 @@ serve(async (req) => {
             );
         }
         // === 2. Parse and validate request body ===
-        const body = await req.json();
+        let body;
+        try {
+            body = await req.json();
+        } catch {
+            return createErrorResponse(
+                "Invalid JSON in request body",
+                400,
+                "INVALID_JSON"
+            );
+        }
         const validated = createAdminSchema.parse(body);
         // === 3. Fetch and verify current admin's password ===
         const { data: currentAdmin, error: fetchError } = await supabase
@@ -129,12 +145,20 @@ serve(async (req) => {
             );
         }
         // === 4. Check if new admin email already exists ===
+        const normalizedEmail = validated.email.trim().toLowerCase();
         const { data: existing, error: checkError } = await supabase
             .from("crm_admin")
             .select("id")
-            .eq("email", validated.email)
-            .single();
-        if (!checkError && existing) {
+            .eq("email", normalizedEmail)
+            .maybeSingle();
+        if (checkError) {
+            console.error("Email check error:", checkError);
+            return createErrorResponse(
+                "Failed to check email availability",
+                500
+            );
+        }
+        if (existing) {
             return createErrorResponse(
                 "Admin with this email already exists",
                 409
@@ -146,7 +170,7 @@ serve(async (req) => {
         const { data: inserted, error: insertError } = await supabase
             .from("crm_admin")
             .insert({
-                email: validated.email,
+                email: normalizedEmail,
                 full_name: validated.full_name,
                 password_hash: passwordHash,
             })

@@ -79,9 +79,9 @@ DECLARE
   fake_user_id uuid := gen_random_uuid();
 BEGIN
   -- This should not cause an error since partner lookup will return NULL
-  INSERT INTO public.crm_payment (user_id, amount, paid_at, payment_method)
-  VALUES (fake_user_id, 100.00, NOW(), 'credit_card');
-  
+  INSERT INTO public.crm_payment (user_id, amount, paid_at, stripe_payment_id, currency)
+  VALUES (fake_user_id, 100.00, NOW(), gen_random_uuid()::text, 'usd');
+
   RAISE NOTICE '✅ Missing partner test PASSED - No error for non-existent user';
 EXCEPTION
   WHEN OTHERS THEN

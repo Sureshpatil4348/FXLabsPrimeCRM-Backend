@@ -26,8 +26,13 @@ function createJWTSecretErrorResponse() {
     );
 }
 // Utility: Standard error response
-function createErrorResponse(message, status = 500, code = null, details = []) {
-    const errorResponse = {
+function createErrorResponse(
+    message: string,
+    status: number = 500,
+    code: string | null = null,
+    details: any[] = []
+) {
+    const errorResponse: any = {
         error: message,
     };
     if (code) errorResponse.code = code;
@@ -72,7 +77,16 @@ serve(async (req) => {
         return createErrorResponse("Method not allowed", 405);
     }
     try {
-        const body = await req.json();
+        let body;
+        try {
+            body = await req.json();
+        } catch {
+            return createErrorResponse(
+                "Invalid JSON in request body",
+                400,
+                "INVALID_JSON"
+            );
+        }
         const validated = loginSchema.parse(body);
         const tableName =
             validated.role === "admin" ? "crm_admin" : "crm_partner";
@@ -86,7 +100,12 @@ serve(async (req) => {
             .eq("email", validated.email)
             .single();
         if (error || !user) {
-            return createErrorResponse("Email does not exist", 404);
+            // Normalize to avoid user enumeration
+            return createErrorResponse(
+                "Invalid credentials",
+                401,
+                "INVALID_CREDENTIALS"
+            );
         }
         // Check partner status
         if (validated.role === "partner" && !user.is_active) {
@@ -95,7 +114,12 @@ serve(async (req) => {
         // Verify password (bcrypt compare)
         const isValid = compareSync(validated.password, user.password_hash);
         if (!isValid) {
-            return createErrorResponse("Incorrect password", 401);
+            // Same response as missing user to avoid enumeration
+            return createErrorResponse(
+                "Invalid credentials",
+                401,
+                "INVALID_CREDENTIALS"
+            );
         }
         // Generate JWT
         let secret;
@@ -113,6 +137,10 @@ serve(async (req) => {
                 alg: "HS256",
             })
             .setIssuedAt()
+            .setIssuer(Deno.env.get("JWT_ISSUER") ?? "fxlabsprimecrm")
+            .setAudience(
+                Deno.env.get("JWT_AUDIENCE") ?? "fxlabsprimecrm-clients"
+            )
             .setExpirationTime("30d")
             .sign(secret);
         const tokenKey =

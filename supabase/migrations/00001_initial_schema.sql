@@ -1,9 +1,12 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+-- Enable citext extension for case-insensitive email handling
+CREATE EXTENSION IF NOT EXISTS citext;
+
 CREATE TABLE public.crm_admin (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  email text NOT NULL UNIQUE CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
+  email citext NOT NULL UNIQUE CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
   password_hash text NOT NULL,
   full_name text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
@@ -11,7 +14,7 @@ CREATE TABLE public.crm_admin (
 );
 CREATE TABLE public.crm_partner (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  email text NOT NULL UNIQUE CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
+  email citext NOT NULL UNIQUE CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
   password_hash text NOT NULL,
   full_name text,
   commission_percent integer NOT NULL DEFAULT 10 CHECK (commission_percent >= 0 AND commission_percent <= 50),
@@ -38,7 +41,7 @@ CREATE TABLE public.crm_user_metadata (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL UNIQUE,
   crm_partner_id uuid,
-  email text NOT NULL CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
+  email citext NOT NULL UNIQUE CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$'),
   region text CHECK (region = ANY (ARRAY['India'::text, 'International'::text])),
   converted_at timestamp with time zone,
   subscription_status text NOT NULL DEFAULT 'added'::text CHECK (subscription_status = ANY (ARRAY['added'::text, 'active'::text, 'expired'::text])),

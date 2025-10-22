@@ -30,8 +30,13 @@ function createJWTSecretErrorResponse() {
     );
 }
 // Utility: Standard error response
-function createErrorResponse(message, status = 500, code = null, details = []) {
-    const errorResponse = {
+function createErrorResponse(
+    message: string,
+    status: number = 500,
+    code: string | null = null,
+    details: any[] = []
+) {
+    const errorResponse: any = {
         error: message,
     };
     if (code) {
@@ -61,10 +66,12 @@ function createValidationErrorResponse(zodError, status = 400) {
     );
 }
 // Initialize Supabase client
-const supabase = createClient(
-    Deno.env.get("SUPABASE_URL"),
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
-);
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Supabase env vars not set");
+}
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 // Input validation schema
 const createPartnerSchema = z.object({
     full_name: z.string().min(1, "Full name is required"),
@@ -84,7 +91,9 @@ serve(async (req) => {
     }
     try {
         // === 1. Validate Admin-Token ===
-        const adminToken = req.headers.get("Admin-Token");
+        const adminToken =
+            req.headers.get("Admin-Token") ??
+            req.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
         if (!adminToken) {
             return createErrorResponse("Admin-Token header required", 401);
         }
@@ -96,32 +105,46 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(adminToken, secret, {
             algorithms: ["HS256"],
+            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "admin") {
             return createErrorResponse("Admin access required", 403);
         }
         // === 2. Parse and validate request body ===
-        const body = await req.json();
+        let body;
+        try {
+            body = await req.json();
+        } catch {
+            return createErrorResponse(
+                "Invalid JSON in request body",
+                400,
+                "INVALID_JSON"
+            );
+        }
         const validated = createPartnerSchema.parse(body);
         // === 3. Check if partner email already exists ===
-        const { data: existing, error: checkError } = await supabase
+        const normalizedEmail = validated.email.trim().toLowerCase();
+        const { data: existing } = await supabase
             .from("crm_partner")
             .select("id")
-            .eq("email", validated.email)
-            .single();
-        if (!checkError && existing) {
+            .eq("email", normalizedEmail)
+            .maybeSingle();
+        if (existing) {
             return createErrorResponse(
                 "Partner with this email already exists",
                 409
             );
         }
         // === 4. Hash password and insert ===
-        const salt = genSaltSync(12);
+        const cost =
+            Number.parseInt(Deno.env.get("BCRYPT_COST") ?? "12", 10) || 12;
+        const salt = genSaltSync(cost);
         const passwordHash = hashSync(validated.password, salt);
         const { data: inserted, error: insertError } = await supabase
             .from("crm_partner")
             .insert({
-                email: validated.email,
+                email: normalizedEmail,
                 full_name: validated.full_name,
                 password_hash: passwordHash,
                 commission_percent: validated.commission_percent,
@@ -130,6 +153,12 @@ serve(async (req) => {
             .select("email, full_name")
             .single();
         if (insertError) {
+            if (insertError.code === "23505") {
+                return createErrorResponse(
+                    "Partner with this email already exists",
+                    409
+                );
+            }
             console.error("Insert error:", insertError);
             return createErrorResponse("Failed to create partner", 500);
         }
