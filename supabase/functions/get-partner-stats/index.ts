@@ -3,9 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 // JWT utilities
 function getJWTSecret() {
-    const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
     if (!secret) {
-        throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+        throw new Error(
+            "CRM_CUSTOM_JWT_SECRET environment variable is not set"
+        );
     }
     return new TextEncoder().encode(secret);
 }
@@ -64,8 +66,8 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(partnerToken, secret, {
             algorithms: ["HS256"],
-            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
-            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
+            issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "partner") {
             return createErrorResponse("Partner access required", 403);

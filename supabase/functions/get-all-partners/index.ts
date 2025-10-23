@@ -4,9 +4,11 @@ import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 import { z } from "https://esm.sh/zod@3.22.4";
 // JWT utilities
 function getJWTSecret() {
-    const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
     if (!secret) {
-        throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+        throw new Error(
+            "CRM_CUSTOM_JWT_SECRET environment variable is not set"
+        );
     }
     return new TextEncoder().encode(secret);
 }
@@ -14,7 +16,7 @@ function createJWTSecretErrorResponse() {
     return new Response(
         JSON.stringify({
             error: "JWT secret configuration error",
-            code: "JWT_SECRET_ERROR",
+            code: "CRM_JWT_SECRET_ERROR",
         }),
         {
             status: 500,
@@ -46,7 +48,7 @@ function createJWTSecretErrorResponse() {
 /**
  * Create a validation error response from Zod errors
  */ function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.issues.map((issue: any) => ({
+    const details = zodError.issues.map((issue) => ({
         field: issue.path.join("."),
         message: issue.message,
     }));
@@ -62,11 +64,11 @@ const supabase = createClient(
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 );
 const DEFAULT_PAGE_SIZE = (() => {
-    const n = parseInt(Deno.env.get("DEFAULT_PAGE_SIZE") ?? "");
+    const n = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "");
     return Number.isFinite(n) && n > 0 ? n : 20;
 })();
 const MAX_PAGE_SIZE = (() => {
-    const n = parseInt(Deno.env.get("MAX_PAGE_SIZE") ?? "");
+    const n = parseInt(Deno.env.get("CRM_MAX_PAGE_SIZE") ?? "");
     return Number.isFinite(n) && n > 0 ? n : 100;
 })();
 // Input validation schema for query parameters
@@ -110,8 +112,8 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(adminToken, secret, {
             algorithms: ["HS256"],
-            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
-            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
+            issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "admin") {
             return createErrorResponse("Admin only", 403);

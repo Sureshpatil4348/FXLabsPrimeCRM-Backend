@@ -4,7 +4,7 @@ import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 import { z } from "https://esm.sh/zod@3.22.4";
 // JWT utilities
 function getJWTSecret() {
-    const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
     if (!secret) {
         throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
     }
@@ -46,7 +46,7 @@ function createJWTSecretErrorResponse() {
 /**
  * Create a validation error response from Zod errors
  */ function createValidationErrorResponse(zodError, status = 400) {
-    const details = zodError.issues.map((issue: any) => ({
+    const details = zodError.issues.map((issue) => ({
         field: issue.path.join("."),
         message: issue.message,
     }));
@@ -89,8 +89,8 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(token, secret, {
             algorithms: ["HS256"],
-            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
-            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
+            issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "admin" && payload.role !== "partner") {
             return createErrorResponse("Admin or Partner access required", 403);
@@ -120,7 +120,9 @@ serve(async (req) => {
             targetPartnerId = validated.partner_id || null;
         }
         // Pagination
-        const envDefault = parseInt(Deno.env.get("DEFAULT_PAGE_SIZE") ?? "20");
+        const envDefault = parseInt(
+            Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "20"
+        );
         const limit =
             Number.isFinite(envDefault) && envDefault > 0 ? envDefault : 20;
         const page = validated.page;

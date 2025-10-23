@@ -3,9 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 // JWT utilities
 function getJWTSecret() {
-    const secret = Deno.env.get("CUSTOM_JWT_SECRET");
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
     if (!secret) {
-        throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+        throw new Error(
+            "CRM_CUSTOM_JWT_SECRET environment variable is not set"
+        );
     }
     return new TextEncoder().encode(secret);
 }
@@ -13,7 +15,7 @@ function createJWTSecretErrorResponse() {
     return new Response(
         JSON.stringify({
             error: "JWT secret configuration error",
-            code: "JWT_SECRET_ERROR",
+            code: "CRM_JWT_SECRET_ERROR",
         }),
         {
             status: 500,
@@ -48,11 +50,11 @@ const supabase = createClient(
 );
 // Pagination configuration from environment (with safe fallbacks)
 const DEFAULT_PAGE_SIZE = (() => {
-    const n = parseInt(Deno.env.get("DEFAULT_PAGE_SIZE") ?? "");
+    const n = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "");
     return Number.isFinite(n) && n > 0 ? n : 20;
 })();
 const MAX_PAGE_SIZE = (() => {
-    const n = parseInt(Deno.env.get("MAX_PAGE_SIZE") ?? "");
+    const n = parseInt(Deno.env.get("CRM_MAX_PAGE_SIZE") ?? "");
     return Number.isFinite(n) && n > 0 ? n : 100;
 })();
 serve(async (req) => {
@@ -73,8 +75,8 @@ serve(async (req) => {
         }
         const { payload } = await jwtVerify(adminToken, secret, {
             algorithms: ["HS256"],
-            issuer: Deno.env.get("JWT_ISSUER") ?? undefined,
-            audience: Deno.env.get("JWT_AUDIENCE") ?? undefined,
+            issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined,
         });
         if (payload.role !== "admin") {
             return createErrorResponse("Admin access required", 403);
@@ -83,14 +85,12 @@ serve(async (req) => {
         const url = new URL(req.url);
         const rawPage = url.searchParams.get("page");
         const rawLimit = url.searchParams.get("limit");
-
         // Parse and validate page
         const parsedPage = rawPage ? Number(rawPage) : 1;
         const page =
             Number.isFinite(parsedPage) && parsedPage >= 1
                 ? Math.floor(parsedPage)
                 : 1; // Normalize invalid page to 1
-
         // Parse and validate limit
         const parsedLimit = rawLimit ? Number(rawLimit) : DEFAULT_PAGE_SIZE;
         const limit =
@@ -101,7 +101,6 @@ serve(async (req) => {
                 : parsedLimit > MAX_PAGE_SIZE
                 ? MAX_PAGE_SIZE // Cap at max
                 : DEFAULT_PAGE_SIZE; // Default for invalid values
-
         const status = url.searchParams.get("status"); // Filter by subscription_status
         const region = url.searchParams.get("region"); // Filter by region
         const offset = (page - 1) * limit;
