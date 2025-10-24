@@ -4,197 +4,269 @@ import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 import { z } from "https://esm.sh/zod@3.22.4";
 // JWT utilities
 function getJWTSecret() {
-  const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
-  if (!secret) {
-    throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
-  }
-  return new TextEncoder().encode(secret);
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
+    if (!secret) {
+        throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+    }
+    return new TextEncoder().encode(secret);
 }
 function createJWTSecretErrorResponse() {
-  return new Response(JSON.stringify({
-    error: "JWT secret configuration error",
-    code: "JWT_SECRET_ERROR"
-  }), {
-    status: 500,
-    headers: {
-      "Content-Type": "application/json"
-    }
-  });
+    return new Response(
+        JSON.stringify({
+            error: "JWT secret configuration error",
+            code: "JWT_SECRET_ERROR",
+        }),
+        {
+            status: 500,
+            headers: {
+                "Content-Type": "application/json",
+            },
+        }
+    );
 }
 /**
  * Create a standardized error response
- */ function createErrorResponse(message, status = 500, code, details) {
-  const errorResponse = {
-    error: message
-  };
-  if (code) {
-    errorResponse.code = code;
-  }
-  if (details && details.length > 0) {
-    errorResponse.details = details;
-  }
-  return new Response(JSON.stringify(errorResponse), {
-    status,
-    headers: {
-      "Content-Type": "application/json"
+ */ function createErrorResponse(
+    message: string,
+    status = 500,
+    code: string | null = null,
+    details: any[] = []
+) {
+    const errorResponse: any = {
+        error: message,
+    };
+    if (code) {
+        errorResponse.code = code;
     }
-  });
+    if (details && details.length > 0) {
+        errorResponse.details = details;
+    }
+    return new Response(JSON.stringify(errorResponse), {
+        status,
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
 }
 /**
  * Create a validation error response from Zod errors
  */ function createValidationErrorResponse(zodError, status = 400) {
-  const details = zodError.issues.map((issue)=>({
-      field: issue.path.join("."),
-      message: issue.message
+    const details = zodError.issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
-  return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
+    return createErrorResponse(
+        "Validation error",
+        status,
+        "VALIDATION_ERROR",
+        details
+    );
 }
-const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+const supabase = createClient(
+    Deno.env.get("SUPABASE_URL"),
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+);
 // Input validation schema
 const querySchema = z.object({
-  partner_id: z.string().uuid("Invalid partner_id format").optional(),
-  page: z.number().int().min(1).optional().default(1)
+    partner_id: z.string().uuid("Invalid partner_id format").optional(),
+    page: z.number().int().min(1).optional().default(1),
 });
-serve(async (req)=>{
-  if (req.method !== "GET") {
-    return createErrorResponse("Method not allowed", 405);
-  }
-  try {
-    // Validate Admin-Token or Partner-Token
-    const adminToken = req.headers.get("Admin-Token");
-    const partnerToken = req.headers.get("Partner-Token");
-    if (!adminToken && !partnerToken) {
-      return createErrorResponse("Admin-Token or Partner-Token header required", 401);
+serve(async (req) => {
+    if (req.method !== "GET") {
+        return createErrorResponse("Method not allowed", 405);
     }
-    const token = adminToken || partnerToken;
-    let secret;
     try {
-      secret = getJWTSecret();
+        // Validate Admin-Token or Partner-Token
+        const adminToken = req.headers.get("Admin-Token");
+        const partnerToken = req.headers.get("Partner-Token");
+        if (!adminToken && !partnerToken) {
+            return createErrorResponse(
+                "Admin-Token or Partner-Token header required",
+                401
+            );
+        }
+        const token = adminToken || partnerToken;
+        let secret;
+        try {
+            secret = getJWTSecret();
+        } catch (error) {
+            return createJWTSecretErrorResponse();
+        }
+        const issuer = Deno.env.get("CRM_JWT_ISSUER");
+        const audience = Deno.env.get("CRM_JWT_AUDIENCE");
+        if (!issuer || !audience) {
+            return createErrorResponse(
+                "JWT issuer/audience not configured",
+                500,
+                "JWT_CONFIG_ERROR"
+            );
+        }
+        const { payload } = await jwtVerify(token, secret, {
+            algorithms: ["HS256"],
+            issuer,
+            audience,
+        });
+        if (payload.role !== "admin" && payload.role !== "partner") {
+            return createErrorResponse("Admin or Partner access required", 403);
+        }
+        // Parse request body
+        const url = new URL(req.url);
+        const partnerIdParam = url.searchParams.get("partner_id");
+        const pageParam = url.searchParams.get("page");
+        const validated = querySchema.parse({
+            partner_id: partnerIdParam || undefined,
+            page: pageParam ? parseInt(pageParam) : 1,
+        });
+        // Determine partner_id
+        let targetPartnerId: string | null = null;
+        if (payload.role === "partner") {
+            const partnerIdFromToken = String(payload.sub ?? "");
+            const isUuid = z
+                .string()
+                .uuid()
+                .safeParse(partnerIdFromToken).success;
+            if (!isUuid) {
+                return createErrorResponse(
+                    "Invalid partner token subject",
+                    401,
+                    "INVALID_PARTNER_TOKEN"
+                );
+            }
+            targetPartnerId = partnerIdFromToken;
+            if (
+                validated.partner_id &&
+                validated.partner_id !== targetPartnerId
+            ) {
+                return createErrorResponse(
+                    "Partners can only view their own users",
+                    403
+                );
+            }
+        } else if (payload.role === "admin") {
+            targetPartnerId = validated.partner_id || null;
+        }
+        // Pagination
+        const envDefault = parseInt(
+            Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "20"
+        );
+        const limit =
+            Number.isFinite(envDefault) && envDefault > 0 ? envDefault : 20;
+        const page = validated.page;
+        const offset = (page - 1) * limit;
+        // Build user query
+        let query = supabase
+            .from("crm_user_metadata")
+            .select(
+                "email, region, subscription_status, subscription_ends_at, created_at, converted_at, user_id",
+                {
+                    count: "exact",
+                }
+            )
+            .order("created_at", {
+                ascending: false,
+            })
+            .range(offset, offset + limit - 1);
+        if (targetPartnerId) {
+            query = query.eq("crm_partner_id", targetPartnerId);
+        }
+        const { data: users, error: usersError, count } = await query;
+        if (usersError) {
+            console.error("Users fetch error:", usersError);
+            throw new Error("Failed to fetch users");
+        }
+        // Fetch payment data for users
+        const userIds = users?.map((u) => u.user_id) || [];
+        let payments = [];
+        if (userIds.length > 0) {
+            const res = await supabase
+                .from("crm_payment")
+                .select("user_id, amount")
+                .in("user_id", userIds);
+            payments = res.data || [];
+            if (res.error) {
+                console.error("Payments fetch error:", res.error);
+                throw new Error("Failed to fetch payment data");
+            }
+        }
+        // Aggregate total payments per user
+        const paymentMap =
+            payments?.reduce((acc, p) => {
+                acc[p.user_id] = (acc[p.user_id] || 0) + Number(p.amount);
+                return acc;
+            }, {}) || {};
+        // Get partner info if specific partner
+        let partnerInfo = null;
+        if (targetPartnerId) {
+            const { data: partner, error: partnerError } = await supabase
+                .from("crm_partner")
+                .select(
+                    "email, full_name, commission_percent, total_revenue, total_converted, is_active"
+                )
+                .eq("id", targetPartnerId)
+                .single();
+            if (!partnerError && partner) {
+                partnerInfo = {
+                    email: partner.email,
+                    full_name: partner.full_name,
+                    commission_percent: partner.commission_percent,
+                    total_revenue: Number(
+                        Number(partner.total_revenue ?? 0).toFixed(2)
+                    ),
+                    total_converted: partner.total_converted,
+                    is_active: partner.is_active,
+                };
+            }
+        }
+        // Calculate pagination info
+        const totalUsers = count || 0;
+        const totalPages = Math.ceil(totalUsers / limit);
+        const hasNextPage = page < totalPages;
+        const hasPreviousPage = page > 1;
+        return new Response(
+            JSON.stringify({
+                partner_info: partnerInfo,
+                users:
+                    users?.map((u) => ({
+                        email: u.email,
+                        region: u.region,
+                        subscription_status: u.subscription_status,
+                        subscription_ends_at: u.subscription_ends_at,
+                        created_at: u.created_at,
+                        converted_at: u.converted_at,
+                        total_payments: Number(
+                            (paymentMap[u.user_id] || 0).toFixed(2)
+                        ),
+                    })) || [],
+                pagination: {
+                    current_page: page,
+                    total_pages: totalPages,
+                    total_users: totalUsers,
+                    per_page: limit,
+                    has_next_page: hasNextPage,
+                    has_previous_page: hasPreviousPage,
+                },
+            }),
+            {
+                status: 200,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            }
+        );
     } catch (error) {
-      return createJWTSecretErrorResponse();
+        if (error instanceof z.ZodError) {
+            return createValidationErrorResponse(error);
+        }
+        if (error?.name === "JWTExpired") {
+            return createErrorResponse("Token has expired", 401);
+        }
+        if (error?.name === "JWSSignatureVerificationFailed") {
+            return createErrorResponse("Invalid token signature", 401);
+        }
+        if (error?.code === "ERR_JWS_INVALID") {
+            return createErrorResponse("Invalid JWT format", 400);
+        }
+        console.error("Unexpected error:", error);
+        return createErrorResponse("Internal server error", 500);
     }
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: [
-        "HS256"
-      ],
-      issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
-      audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined
-    });
-    if (payload.role !== "admin" && payload.role !== "partner") {
-      return createErrorResponse("Admin or Partner access required", 403);
-    }
-    // Parse request body
-    const url = new URL(req.url);
-    const partnerIdParam = url.searchParams.get("partner_id");
-    const pageParam = url.searchParams.get("page");
-    const validated = querySchema.parse({
-      partner_id: partnerIdParam || undefined,
-      page: pageParam ? parseInt(pageParam) : 1
-    });
-    // Determine partner_id
-    let targetPartnerId = null;
-    if (payload.role === "partner") {
-      targetPartnerId = payload.sub;
-      if (validated.partner_id && validated.partner_id !== targetPartnerId) {
-        return createErrorResponse("Partners can only view their own users", 403);
-      }
-    } else if (payload.role === "admin") {
-      targetPartnerId = validated.partner_id || null;
-    }
-    // Pagination
-    const envDefault = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "20");
-    const limit = Number.isFinite(envDefault) && envDefault > 0 ? envDefault : 20;
-    const page = validated.page;
-    const offset = (page - 1) * limit;
-    // Build user query
-    let query = supabase.from("crm_user_metadata").select("email, region, subscription_status, subscription_ends_at, created_at, converted_at, user_id", {
-      count: "exact"
-    }).order("created_at", {
-      ascending: false
-    }).range(offset, offset + limit - 1);
-    if (targetPartnerId) {
-      query = query.eq("crm_partner_id", targetPartnerId);
-    }
-    const { data: users, error: usersError, count } = await query;
-    if (usersError) {
-      console.error("Users fetch error:", usersError);
-      throw new Error("Failed to fetch users");
-    }
-    // Fetch payment data for users
-    const userIds = users?.map((u)=>u.user_id) || [];
-    let payments = [];
-    if (userIds.length > 0) {
-      const res = await supabase.from("crm_payment").select("user_id, amount").in("user_id", userIds);
-      payments = res.data || [];
-      if (res.error) {
-        console.error("Payments fetch error:", res.error);
-        throw new Error("Failed to fetch payment data");
-      }
-    }
-    // Aggregate total payments per user
-    const paymentMap = payments?.reduce((acc, p)=>{
-      acc[p.user_id] = (acc[p.user_id] || 0) + Number(p.amount);
-      return acc;
-    }, {}) || {};
-    // Get partner info if specific partner
-    let partnerInfo = null;
-    if (targetPartnerId) {
-      const { data: partner, error: partnerError } = await supabase.from("crm_partner").select("email, full_name, commission_percent, total_revenue, total_converted, is_active").eq("id", targetPartnerId).single();
-      if (!partnerError && partner) {
-        partnerInfo = {
-          email: partner.email,
-          full_name: partner.full_name,
-          commission_percent: partner.commission_percent,
-          total_revenue: Number(Number(partner.total_revenue ?? 0).toFixed(2)),
-          total_converted: partner.total_converted,
-          is_active: partner.is_active
-        };
-      }
-    }
-    // Calculate pagination info
-    const totalUsers = count || 0;
-    const totalPages = Math.ceil(totalUsers / limit);
-    const hasNextPage = page < totalPages;
-    const hasPreviousPage = page > 1;
-    return new Response(JSON.stringify({
-      partner_info: partnerInfo,
-      users: users?.map((u)=>({
-          email: u.email,
-          region: u.region,
-          subscription_status: u.subscription_status,
-          subscription_ends_at: u.subscription_ends_at,
-          created_at: u.created_at,
-          converted_at: u.converted_at,
-          total_payments: Number((paymentMap[u.user_id] || 0).toFixed(2))
-        })) || [],
-      pagination: {
-        current_page: page,
-        total_pages: totalPages,
-        total_users: totalUsers,
-        per_page: limit,
-        has_next_page: hasNextPage,
-        has_previous_page: hasPreviousPage
-      }
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return createValidationErrorResponse(error);
-    }
-    if (error?.name === "JWTExpired") {
-      return createErrorResponse("Token has expired", 401);
-    }
-    if (error?.name === "JWSSignatureVerificationFailed") {
-      return createErrorResponse("Invalid token signature", 401);
-    }
-    if (error?.code === "ERR_JWS_INVALID") {
-      return createErrorResponse("Invalid JWT format", 400);
-    }
-    console.error("Unexpected error:", error);
-    return createErrorResponse("Internal server error", 500);
-  }
 });
