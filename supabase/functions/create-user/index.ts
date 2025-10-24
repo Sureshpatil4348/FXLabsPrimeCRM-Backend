@@ -2,11 +2,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 import { z } from "https://esm.sh/zod@3.22.4";
+// ========== SENDGRID CONFIGURATION ==========
+const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
+const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL") || "noreply@yourdomain.com";
+const FROM_NAME = Deno.env.get("CRM_FROM_NAME") || "Your CRM Team";
+const LOGIN_URL = "https://fxlabsprime.com";
+// ============================================
 // JWT utilities
 function getJWTSecret() {
   const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
   if (!secret) {
-    throw new Error("CUSTOM_JWT_SECRET environment variable is not set");
+    throw new Error("CRM_CUSTOM_JWT_SECRET environment variable is not set");
   }
   return new TextEncoder().encode(secret);
 }
@@ -21,18 +27,12 @@ function createJWTSecretErrorResponse() {
     }
   });
 }
-/**
- * Create a standardized error response
- */ function createErrorResponse(message, status = 500, code = null, details = []) {
+function createErrorResponse(message, status = 500, code = null, details = []) {
   const errorResponse = {
     error: message
   };
-  if (code) {
-    errorResponse.code = code;
-  }
-  if (details && details.length > 0) {
-    errorResponse.details = details;
-  }
+  if (code) errorResponse.code = code;
+  if (details?.length > 0) errorResponse.details = details;
   return new Response(JSON.stringify(errorResponse), {
     status,
     headers: {
@@ -40,9 +40,7 @@ function createJWTSecretErrorResponse() {
     }
   });
 }
-/**
- * Create a validation error response from Zod errors
- */ function createValidationErrorResponse(zodError, status = 400) {
+function createValidationErrorResponse(zodError, status = 400) {
   const details = zodError.issues.map((issue)=>({
       field: issue.path?.join(".") || "",
       message: issue.message
@@ -50,11 +48,11 @@ function createJWTSecretErrorResponse() {
   return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
 }
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-// Default trial days from environment (fallback 15)
+// Configuration
 const rawTrial = Deno.env.get("CRM_DEFAULT_TRIAL_DAYS");
 const parsedTrial = Number.parseInt(rawTrial ?? "", 10);
 const DEFAULT_TRIAL_DAYS = Number.isFinite(parsedTrial) && parsedTrial >= 1 ? parsedTrial : 15;
-// Input validation schema
+// Validation schema
 const createUserSchema = z.object({
   users: z.array(z.object({
     email: z.string().email("Invalid email format")
@@ -70,43 +68,260 @@ const createUserSchema = z.object({
   trial_days: z.number().int().min(1, "trial_days must be a positive integer").optional().default(DEFAULT_TRIAL_DAYS)
 });
 /**
- * Atomically create user in auth and metadata tables
- * Ensures both operations succeed or both fail (with cleanup)
- */ async function createUserAtomically(email, normalizedEmail, region, partnerId, subscriptionEndsAt) {
+ * Generate 8-digit alphanumeric password
+ */ function generatePassword() {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const array = new Uint8Array(8);
+  crypto.getRandomValues(array);
+  return Array.from(array, (byte)=>charset[byte % charset.length]).join("");
+}
+/**
+ * Create email HTML template
+ */ function createEmailTemplate(email, password, trialDays) {
+  return `
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Welcome to FxLabs Prime</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      .preheader { display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden; mso-hide:all; }
+      @media only screen and (max-width: 600px) {
+        .container { width: 100% !important; }
+      }
+    </style>
+  </head>
+  <body style="margin:0; padding:0; background-color:#f6f7fb; font-family: Arial, Helvetica, sans-serif; color:#222;">
+    <div class="preheader">
+      You have been added to FxLabs Prime. Your trial ends in ${trialDays} days.
+    </div>
+
+    <!-- Header -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#07c05c; padding:16px 20px;">
+      <tr>
+        <td align="center" style="color:#fff; font-size:18px; font-weight:600;">
+          FxLabs Prime
+        </td>
+      </tr>
+    </table>
+
+    <!-- Main Body -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:30px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:90%; background-color:#ffffff; border-radius:12px; padding:30px;">
+            <tr>
+              <td>
+                <h2 style="margin:0 0 12px; color:#111;">Welcome to FxLabs Prime</h2>
+                <p style="margin:0 0 16px;">
+                  You have been added to <strong>FxLabs Prime</strong>. Your trial period ends in <strong>${trialDays} days</strong>.
+                </p>
+
+                <!-- Credentials Box -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0;">
+                  <tr>
+                    <td style="padding:20px; font-size:14px; line-height:1.6;">
+                      <strong style="color:#111; font-size:15px;">Your Login Credentials</strong>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+                        <tr>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">Email:</td>
+                          <td style="padding:8px 0; color:#111;">${email}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">Password:</td>
+                          <td style="padding:8px 0;">
+                            <span style="font-family: 'Courier New', monospace; background-color:#fff; padding:6px 12px; border-radius:4px; font-size:16px; font-weight:bold; color:#07c05c; letter-spacing:2px; border:1px solid #e6e7ec;">${password}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">Trial Period:</td>
+                          <td style="padding:8px 0; color:#111; font-weight:600;">${trialDays} days</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- CTA -->
+                <p style="margin:20px 0 0; text-align:center;">
+                  <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to FxLabs Prime">
+                    Login to FxLabs Prime
+                  </a>
+                </p>
+
+                <!-- Important Notice -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff7e6; border:1px solid #ffd59e; border-radius:8px; margin:20px 0 0;">
+                  <tr>
+                    <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#663c00;">
+                      <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes. Go to <strong>Your Profile</strong> and update your password immediately.
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Support -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0 0;">
+                  <tr>
+                    <td style="padding:12px 16px; font-size:14px; line-height:1.6; color:#555;">
+                      <strong style="color:#111;">Need help?</strong> Message us on Telegram:
+                      <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none; font-weight:600;">@Fxlabs_prime</a>
+                    </td>
+                  </tr>
+                </table>
+
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Footer -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px; padding:20px 0;">
+      <tr>
+        <td align="center" style="font-size:12px; color:#555; line-height:1.6; max-width:600px; padding:0 20px;">
+          FxLabs Prime provides automated market insights and notifications for informational and educational purposes only.
+          Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade.
+          Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment.
+          Data may be delayed or inaccurate; FxLabs Prime assumes no responsibility for any trading losses.
+          Always verify information independently and comply with your local laws and regulations before acting on any signal.
+          Use of this service implies acceptance of our
+          <a href="https://fxlabsprime.com/terms-of-service" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Terms of Service</a>
+          and
+          <a href="https://fxlabsprime.com/privacy-policy" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Privacy Policy</a>.
+          <br/><br/>
+          Need help? Chat with us on Telegram:
+          <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">@Fxlabs_prime</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+  `.trim();
+}
+/**
+ * Send email via SendGrid with 1 retry
+ */ async function sendEmail(email, password, trialDays) {
+  if (!SENDGRID_API_KEY) {
+    console.error("❌ SendGrid API key not configured");
+    return {
+      success: false,
+      error: "Email service not configured"
+    };
+  }
+  const emailData = {
+    personalizations: [
+      {
+        to: [
+          {
+            email
+          }
+        ],
+        subject: "Welcome to FxLabs Prime"
+      }
+    ],
+    from: {
+      email: FROM_EMAIL,
+      name: FROM_NAME
+    },
+    content: [
+      {
+        type: "text/html",
+        value: createEmailTemplate(email, password, trialDays)
+      }
+    ]
+  };
+  // Try sending email twice (initial + 1 retry)
+  for(let attempt = 1; attempt <= 2; attempt++){
+    try {
+      console.log(`📧 Sending email to ${email} (attempt ${attempt}/2)`);
+      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${SENDGRID_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(emailData)
+      });
+      if (response.ok) {
+        console.log(`✅ Email sent successfully to ${email}`);
+        return {
+          success: true
+        };
+      }
+      const errorText = await response.text();
+      console.error(`❌ SendGrid error for ${email} (${response.status}): ${errorText}`);
+      // Retry only on first attempt
+      if (attempt === 1) {
+        console.log(`🔄 Retrying email to ${email}...`);
+        await new Promise((resolve)=>setTimeout(resolve, 1000));
+        continue;
+      }
+      return {
+        success: false,
+        error: `SendGrid error: ${response.status}`
+      };
+    } catch (error) {
+      console.error(`❌ Exception sending email to ${email}:`, error);
+      // Retry only on first attempt
+      if (attempt === 1) {
+        console.log(`🔄 Retrying email to ${email}...`);
+        await new Promise((resolve)=>setTimeout(resolve, 1000));
+        continue;
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Network error"
+      };
+    }
+  }
+  return {
+    success: false,
+    error: "Failed after retry"
+  };
+}
+/**
+ * Atomically create user and send email
+ */ async function createUserAtomically(email, normalizedEmail, region, partnerId, subscriptionEndsAt, trialDays) {
   let authUserId = null;
+  let tempPassword = null;
   try {
-    // Step 1: Check if email already exists
+    // Check if email already exists
     const { data: existingMeta, error: metaCheckError } = await supabase.from("crm_user_metadata").select("email, user_id").eq("email", normalizedEmail).maybeSingle();
     if (metaCheckError) {
-      console.error(`Error checking existing user ${email}:`, metaCheckError.message);
+      console.error(`❌ Error checking existing user ${email}:`, metaCheckError.message);
       return {
         success: false,
         reason: `Database check failed: ${metaCheckError.message}`
       };
     }
     if (existingMeta) {
-      console.log(`Email already exists: ${email}`);
+      console.log(`⚠️ Email already exists: ${email}`);
       return {
         success: false,
         reason: "User already exists"
       };
     }
-    // Step 2: Create auth user
-    console.log(`Creating auth user: ${email}`);
+    // Generate 8-digit alphanumeric password
+    tempPassword = generatePassword();
+    console.log(`🔑 Generated password for ${email}: ${tempPassword}`);
+    // Create auth user with password
+    console.log(`👤 Creating auth user: ${email}`);
     const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
       email,
+      password: tempPassword,
       email_confirm: true
     });
     if (authError || !authUser?.user) {
-      console.error(`Auth create error for ${email}:`, authError?.message || "No user returned");
+      console.error(`❌ Auth create error for ${email}:`, authError?.message || "No user returned");
       return {
         success: false,
         reason: authError?.message || "User creation failed"
       };
     }
     authUserId = authUser.user.id;
-    console.log(`Auth user created with ID: ${authUserId}`);
-    // Step 3: Create metadata entry
+    console.log(`✅ Auth user created with ID: ${authUserId}`);
+    // Create metadata entry
     const { data: metaData, error: metaError } = await supabase.from("crm_user_metadata").insert({
       user_id: authUserId,
       email: normalizedEmail,
@@ -118,35 +333,42 @@ const createUserSchema = z.object({
       updated_at: new Date().toISOString()
     }).select("email");
     if (metaError) {
-      console.error(`Metadata insert error for ${email}:`, metaError.message);
+      console.error(`❌ Metadata insert error for ${email}:`, metaError.message);
       throw new Error(`Metadata creation failed: ${metaError.message}`);
     }
-    // Step 4: Verify metadata was created
     if (!metaData || metaData.length === 0) {
-      console.error(`Metadata insert returned no data for ${email}`);
+      console.error(`❌ Metadata insert returned no data for ${email}`);
       throw new Error("Metadata creation returned no data");
     }
-    console.log(`Successfully created user: ${email}`);
+    console.log(`✅ Metadata created for ${email}`);
+    // Send welcome email
+    const emailResult = await sendEmail(email, tempPassword, trialDays);
+    if (!emailResult.success) {
+      console.warn(`⚠️ User created but email failed for ${email}: ${emailResult.error}`);
+    }
+    console.log(`✅ User creation complete for ${email}`);
     return {
       success: true,
-      email: metaData[0].email
+      email: metaData[0].email,
+      emailSent: emailResult.success,
+      emailError: emailResult.error
     };
   } catch (error) {
-    console.error(`Error in atomic user creation for ${email}:`, error);
-    // CRITICAL: Cleanup auth user if it was created
+    console.error(`❌ Error in atomic user creation for ${email}:`, error);
+    // Cleanup auth user if created
     if (authUserId) {
       try {
-        console.log(`Attempting to cleanup auth user ${authUserId} for ${email}`);
+        console.log(`🧹 Attempting to cleanup auth user ${authUserId} for ${email}`);
         const { error: deleteError } = await supabase.auth.admin.deleteUser(authUserId);
         if (deleteError) {
-          console.error(`CRITICAL: Failed to cleanup auth user ${authUserId}:`, deleteError.message);
-          console.error(`Manual intervention required: Delete auth user ${authUserId} for email ${email}`);
+          console.error(`❌ CRITICAL: Failed to cleanup auth user ${authUserId}:`, deleteError.message);
+          console.error(`⚠️ Manual intervention required: Delete auth user ${authUserId} for email ${email}`);
         } else {
-          console.log(`Successfully cleaned up auth user ${authUserId}`);
+          console.log(`✅ Successfully cleaned up auth user ${authUserId}`);
         }
       } catch (cleanupError) {
-        console.error(`CRITICAL: Exception during cleanup of auth user ${authUserId}:`, cleanupError);
-        console.error(`Manual intervention required: Delete auth user ${authUserId} for email ${email}`);
+        console.error(`❌ CRITICAL: Exception during cleanup of auth user ${authUserId}:`, cleanupError);
+        console.error(`⚠️ Manual intervention required: Delete auth user ${authUserId} for email ${email}`);
       }
     }
     return {
@@ -192,6 +414,7 @@ serve(async (req)=>{
       return createErrorResponse("Invalid JSON in request body", 400, "INVALID_JSON");
     }
     const validated = createUserSchema.parse(body);
+    console.log(`\n📋 Processing ${validated.users.length} user(s)...`);
     const createdUsers = [];
     const existingUsers = [];
     const failedUsers = [];
@@ -201,10 +424,13 @@ serve(async (req)=>{
     for (const userInput of validated.users){
       const { email } = userInput;
       const normalizedEmail = email.trim().toLowerCase();
-      const result = await createUserAtomically(email, normalizedEmail, validated.region, partnerId, subscriptionEndsAt);
+      console.log(`\n--- Processing ${email} ---`);
+      const result = await createUserAtomically(email, normalizedEmail, validated.region, partnerId, subscriptionEndsAt, validated.trial_days);
       if (result.success) {
         createdUsers.push({
-          email: result.email
+          email: result.email,
+          email_sent: result.emailSent,
+          email_error: result.emailError || null
         });
       } else if (result.reason === "User already exists") {
         existingUsers.push({
@@ -218,13 +444,16 @@ serve(async (req)=>{
         });
       }
     }
+    const emailsSentCount = createdUsers.filter((u)=>u.email_sent).length;
+    console.log(`\n✅ Summary: ${createdUsers.length} created, ${emailsSentCount} emails sent, ${existingUsers.length} existing, ${failedUsers.length} failed\n`);
     const statusCode = createdUsers.length > 0 ? 201 : existingUsers.length > 0 ? 200 : 400;
     return new Response(JSON.stringify({
       message: `Processed ${validated.users.length} user(s)`,
       summary: {
         created: createdUsers.length,
         existing: existingUsers.length,
-        failed: failedUsers.length
+        failed: failedUsers.length,
+        emails_sent: emailsSentCount
       },
       created_users: createdUsers,
       existing_users: existingUsers,
@@ -247,7 +476,7 @@ serve(async (req)=>{
     if (error?.code === "ERR_JWS_INVALID") {
       return createErrorResponse("Invalid JWT format", 400);
     }
-    console.error("Unexpected error:", error);
+    console.error("❌ Unexpected error:", error);
     return createErrorResponse("Internal server error", 500);
   }
 });
