@@ -9,6 +9,17 @@ const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL") || "noreply@yourdomain.com";
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME") || "Your CRM Team";
 const LOGIN_URL = "https://fxlabsprime-crm-qa.netlify.app/login/admin";
 // ============================================
+// Utility: Generate random 8-character alphanumeric password
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let password = '';
+  const array = new Uint8Array(8);
+  crypto.getRandomValues(array);
+  for(let i = 0; i < 8; i++){
+    password += chars[array[i] % chars.length];
+  }
+  return password;
+}
 // Utility: Get JWT secret
 function getJWTSecret() {
   const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
@@ -256,11 +267,10 @@ function createValidationErrorResponse(zodError, status = 400) {
 }
 // Initialize Supabase client
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-// Input validation schema
+// Input validation schema (password removed, current_admin_password kept)
 const createAdminSchema = z.object({
   full_name: z.string().min(1, "Full name is required"),
   email: z.string().email("Invalid email format"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
   current_admin_password: z.string().min(1, "Current admin password is required")
 });
 serve(async (req)=>{
@@ -326,9 +336,12 @@ serve(async (req)=>{
     if (existing) {
       return createErrorResponse("Admin with this email already exists", 409);
     }
-    // === 5. Hash password and insert ===
+    // === 5. Generate random password ===
+    const generatedPassword = generatePassword();
+    console.log(`🔑 Generated password for ${normalizedEmail}: ${generatedPassword}`);
+    // === 6. Hash password and insert ===
     const salt = genSaltSync(12);
-    const passwordHash = hashSync(validated.password, salt);
+    const passwordHash = hashSync(generatedPassword, salt);
     const { data: inserted, error: insertError } = await supabase.from("crm_admin").insert({
       email: normalizedEmail,
       full_name: validated.full_name,
@@ -342,12 +355,12 @@ serve(async (req)=>{
       console.error("Insert error:", insertError);
       return createErrorResponse("Failed to create admin", 500);
     }
-    // === 6. Send welcome email ===
-    const emailResult = await sendEmail(normalizedEmail, validated.password, validated.full_name);
+    // === 7. Send welcome email ===
+    const emailResult = await sendEmail(normalizedEmail, generatedPassword, validated.full_name);
     if (!emailResult.success) {
       console.warn(`⚠️ Admin created but email failed for ${normalizedEmail}: ${emailResult.error}`);
     }
-    // === 7. Success ===
+    // === 8. Success ===
     return new Response(JSON.stringify({
       message: `Admin ${inserted.full_name} with Email - ${inserted.email} has been created successfully`,
       email_sent: emailResult.success,

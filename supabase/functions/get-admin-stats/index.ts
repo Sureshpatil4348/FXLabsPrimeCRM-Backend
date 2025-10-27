@@ -90,15 +90,21 @@ serve(async (req)=>{
     const totalActive = userData?.filter((u)=>u.subscription_status === "active").length || 0;
     const totalExpired = userData?.filter((u)=>u.subscription_status === "expired").length || 0;
     const recentSignups = userData?.filter((u)=>new Date(u.created_at) >= oneMonthAgo).length || 0;
-    const totalUsersByRegion = userData?.reduce((acc, u)=>{
-      const region = u.region || "null"; // Explicitly handle null region
-      acc[region] = (acc[region] || 0) + 1;
-      return acc;
-    }, {
-      null: 0
-    }) || {
-      null: 0
+    // Initialize all regions with 0
+    const totalUsersByRegion = {
+      "India": 0,
+      "International": 0,
+      "null": 0
     };
+    // Count users by region
+    userData?.forEach((u)=>{
+      const region = u.region || "null";
+      if (region in totalUsersByRegion) {
+        totalUsersByRegion[region]++;
+      } else {
+        totalUsersByRegion[region] = 1;
+      }
+    });
     // 3. Get partner stats
     const { data: partnerData, error: partnerError } = await supabase.from("crm_partner").select("id, is_active");
     if (partnerError) {

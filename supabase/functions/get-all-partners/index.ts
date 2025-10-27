@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
-import { z } from "https://esm.sh/zod@3.22.4";
 // JWT utilities
 function getJWTSecret() {
   const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
@@ -40,16 +39,8 @@ function createJWTSecretErrorResponse() {
     }
   });
 }
-/**
- * Create a validation error response from Zod errors
- */ function createValidationErrorResponse(zodError, status = 400) {
-  const details = zodError.issues.map((issue)=>({
-      field: issue.path.join("."),
-      message: issue.message
-    }));
-  return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
-}
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+// Pagination configuration from environment (with safe fallbacks)
 const DEFAULT_PAGE_SIZE = (()=>{
   const n = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "");
   return Number.isFinite(n) && n > 0 ? n : 20;
@@ -58,34 +49,15 @@ const MAX_PAGE_SIZE = (()=>{
   const n = parseInt(Deno.env.get("CRM_MAX_PAGE_SIZE") ?? "");
   return Number.isFinite(n) && n > 0 ? n : 100;
 })();
-// Input validation schema for query parameters
-const getPartnersQuerySchema = z.object({
-  page: z.string().optional().transform((val)=>{
-    const parsed = parseInt(val || "1");
-    return isNaN(parsed) || parsed < 1 ? 1 : parsed;
-  }),
-  page_size: z.string().optional().transform((val)=>{
-    const parsed = parseInt(val || `${DEFAULT_PAGE_SIZE}`);
-    if (isNaN(parsed) || parsed < 1) return DEFAULT_PAGE_SIZE;
-    if (parsed > MAX_PAGE_SIZE) return MAX_PAGE_SIZE;
-    return parsed;
-  }),
-  sort_by: z.enum([
-    "revenue",
-    "added",
-    "converted",
-    "created"
-  ]).optional().default("created")
-});
 serve(async (req)=>{
   if (req.method !== "GET") {
     return createErrorResponse("Method not allowed", 405);
   }
   try {
-    // === Auth ===
+    // Validate Admin-Token only
     const adminToken = req.headers.get("Admin-Token");
     if (!adminToken) {
-      return createErrorResponse("Admin-Token required", 401);
+      return createErrorResponse("Admin-Token header required", 401);
     }
     let secret;
     try {
@@ -101,82 +73,106 @@ serve(async (req)=>{
       audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined
     });
     if (payload.role !== "admin") {
-      return createErrorResponse("Admin only", 403);
+      return createErrorResponse("Admin access required", 403);
     }
-    // === Parse and validate query params ===
+    // Get URL params
     const url = new URL(req.url);
-    const queryParams = {
-      page: url.searchParams.get("page") || undefined,
-      page_size: url.searchParams.get("page_size") || undefined,
-      sort_by: url.searchParams.get("sort_by") || undefined
-    };
-    const validationResult = getPartnersQuerySchema.safeParse(queryParams);
-    if (!validationResult.success) {
-      return createErrorResponse("Invalid query parameters", 400, "VALIDATION_ERROR", validationResult.error.issues.map((issue)=>({
-          field: issue.path.join("."),
-          message: issue.message
-        })));
+    const rawPage = url.searchParams.get("page");
+    const rawLimit = url.searchParams.get("limit");
+    // Parse and validate page
+    const parsedPage = rawPage ? Number(rawPage) : 1;
+    const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1; // Normalize invalid page to 1
+    // Parse and validate limit
+    const parsedLimit = rawLimit ? Number(rawLimit) : DEFAULT_PAGE_SIZE;
+    const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 && parsedLimit <= MAX_PAGE_SIZE ? Math.floor(parsedLimit) : parsedLimit > MAX_PAGE_SIZE ? MAX_PAGE_SIZE // Cap at max
+     : DEFAULT_PAGE_SIZE; // Default for invalid values
+    const status = url.searchParams.get("status"); // Filter by subscription_status
+    const region = url.searchParams.get("region"); // Filter by region
+    const offset = (page - 1) * limit;
+    // Build query
+    let query = supabase.from("crm_user_metadata").select(`
+        user_id,
+        email,
+        region,
+        subscription_status,
+        subscription_ends_at,
+        stripe_customer_id,
+        converted_at,
+        created_at,
+        crm_partner:crm_partner_id(email, full_name)
+      `, {
+      count: "exact"
+    }).order("created_at", {
+      ascending: false
+    }).range(offset, offset + limit - 1);
+    // Apply filters
+    if (status) {
+      query = query.eq("subscription_status", status);
     }
-    const { page, page_size: pageSize, sort_by: sortBy } = validationResult.data;
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-    // === Build query ===
-    let query = supabase.from("crm_partner").select("id, email, full_name, commission_percent, total_revenue, total_added, total_converted, created_at");
-    // Apply sorting
-    switch(sortBy){
-      case "revenue":
-        query = query.order("total_revenue", {
-          ascending: false
-        });
-        break;
-      case "added":
-        query = query.order("total_added", {
-          ascending: false
-        });
-        break;
-      case "converted":
-        query = query.order("total_converted", {
-          ascending: false
-        });
-        break;
-      case "created":
-      default:
-        query = query.order("created_at", {
-          ascending: false
-        });
+    if (region) {
+      query = query.eq("region", region);
     }
-    // === Get total count ===
-    const { count, error: countErr } = await supabase.from("crm_partner").select("*", {
-      count: "exact",
-      head: true
+    const { data: users, error: usersError, count } = await query;
+    if (usersError) {
+      console.error("Users fetch error:", usersError);
+      throw new Error("Failed to fetch users");
+    }
+    // Get payment totals for all users in a single query (fix N+1 problem)
+    // Before: N+1 queries (1 for users + N for each user's payments)
+    // After: 2 queries total (1 for users + 1 for all payments)
+    const userIds = (users || []).map((user)=>user.user_id);
+    let allPayments = [];
+    if (userIds.length > 0) {
+      const { data: paymentsData, error: paymentsError } = await supabase.from("crm_payment").select("user_id, amount").in("user_id", userIds);
+      if (paymentsError) {
+        console.error("Payments fetch error:", paymentsError);
+        throw new Error("Failed to fetch payment data");
+      }
+      allPayments = paymentsData || [];
+    }
+    // Group payments by user_id and calculate totals
+    const paymentTotals = new Map();
+    allPayments?.forEach((payment)=>{
+      const currentTotal = paymentTotals.get(payment.user_id) || 0;
+      paymentTotals.set(payment.user_id, currentTotal + Number(payment.amount));
     });
-    if (countErr) throw countErr;
-    // === Fetch data ===
-    const { data: partners, error: dataErr } = await query.range(from, to);
-    if (dataErr) throw dataErr;
-    const total = count ?? 0;
-    const totalPages = Math.ceil(total / pageSize);
+    // Map users with their payment totals
+    const usersWithPayments = (users || []).map((user)=>{
+      const totalSpent = paymentTotals.get(user.user_id) || 0;
+      return {
+        user_id: user.user_id,
+        email: user.email,
+        region: user.region,
+        subscription_status: user.subscription_status,
+        subscription_ends_at: user.subscription_ends_at,
+        has_paid: !!user.converted_at,
+        total_spent: Number(totalSpent.toFixed(2)),
+        converted_at: user.converted_at,
+        created_at: user.created_at,
+        partner: user.crm_partner ? {
+          email: user.crm_partner.email,
+          full_name: user.crm_partner.full_name
+        } : null
+      };
+    });
+    // Calculate pagination info
+    const totalUsers = count || 0;
+    const totalPages = Math.ceil(totalUsers / limit);
+    const hasNextPage = page < totalPages;
+    const hasPreviousPage = page > 1;
     return new Response(JSON.stringify({
-      partners: partners.map((p)=>({
-          partner_id: p.id,
-          email: p.email,
-          full_name: p.full_name,
-          commission_percent: p.commission_percent,
-          total_revenue: parseFloat(p.total_revenue ?? "0"),
-          total_added: p.total_added,
-          total_converted: p.total_converted,
-          created_at: p.created_at
-        })),
+      users: usersWithPayments,
       pagination: {
-        page,
-        page_size: pageSize,
-        total,
+        current_page: page,
         total_pages: totalPages,
-        has_next: page < totalPages,
-        has_prev: page > 1
+        total_users: totalUsers,
+        per_page: limit,
+        has_next_page: hasNextPage,
+        has_previous_page: hasPreviousPage
       },
-      filters: {
-        sort_by: sortBy
+      filters_applied: {
+        status: status || null,
+        region: region || null
       }
     }), {
       status: 200,
@@ -185,10 +181,16 @@ serve(async (req)=>{
       }
     });
   } catch (error) {
-    console.error("Error:", error);
-    if (error?.name === "JWTExpired" || error?.name === "JWSSignatureVerificationFailed") {
-      return createErrorResponse("Invalid Admin-Token", 401);
+    if (error?.name === "JWTExpired") {
+      return createErrorResponse("Admin-Token has expired", 401);
     }
-    return createErrorResponse("Internal error", 500);
+    if (error?.name === "JWSSignatureVerificationFailed") {
+      return createErrorResponse("Invalid Admin-Token signature", 401);
+    }
+    if (error?.code === "ERR_JWS_INVALID") {
+      return createErrorResponse("Invalid JWT format", 400);
+    }
+    console.error("Unexpected error:", error);
+    return createErrorResponse("Internal server error", 500);
   }
 });

@@ -133,7 +133,7 @@ serve(async (req)=>{
         total_active: totalActive,
         total_expired: totalExpired,
         users_by_region: usersByRegion,
-        recent_signups_30_days: recentSignups,
+        recent_users_30_days: recentSignups,
         last_month_conversions: lastMonthConversions,
         conversion_rate: conversionRate
       },
