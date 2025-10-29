@@ -77,8 +77,6 @@ serve(async (req)=>{
     }
     const totalRevenue = revenueData?.reduce((sum, payment)=>sum + Number(payment.amount), 0) || 0;
     const lastMonthRevenue = revenueData?.filter((payment)=>new Date(payment.paid_at) >= oneMonthAgo).reduce((sum, payment)=>sum + Number(payment.amount), 0) || 0;
-    const totalPayments = revenueData?.length || 0;
-    const averagePaymentAmount = totalPayments > 0 ? totalRevenue / totalPayments : 0;
     // 2. Get user stats
     const { data: userData, error: userError } = await supabase.from("crm_user_metadata").select("subscription_status, region, created_at");
     if (userError) {
@@ -86,9 +84,10 @@ serve(async (req)=>{
       throw new Error("Failed to fetch user data");
     }
     const totalUsers = userData?.length || 0;
-    const totalAdded = userData?.filter((u)=>u.subscription_status === "added").length || 0;
-    const totalActive = userData?.filter((u)=>u.subscription_status === "active").length || 0;
+    const totalTrial = userData?.filter((u)=>u.subscription_status === "trial").length || 0;
+    const totalPaid = userData?.filter((u)=>u.subscription_status === "paid").length || 0;
     const totalExpired = userData?.filter((u)=>u.subscription_status === "expired").length || 0;
+    const totalActive = totalUsers - totalExpired;
     const recentSignups = userData?.filter((u)=>new Date(u.created_at) >= oneMonthAgo).length || 0;
     // Initialize all regions with 0
     const totalUsersByRegion = {
@@ -160,13 +159,12 @@ serve(async (req)=>{
       revenue: {
         total: Number(totalRevenue.toFixed(2)),
         last_month: Number(lastMonthRevenue.toFixed(2)),
-        total_payments: totalPayments,
-        average_payment_amount: Number(averagePaymentAmount.toFixed(2)),
         currency: "usd"
       },
       users: {
         total_users: totalUsers,
-        total_added: totalAdded,
+        total_trial: totalTrial,
+        total_paid: totalPaid,
         total_active: totalActive,
         total_expired: totalExpired,
         total_users_by_region: totalUsersByRegion,
