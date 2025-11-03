@@ -327,7 +327,7 @@ const createUserSchema = z.object({
       email: normalizedEmail,
       region: region,
       crm_partner_id: partnerId,
-      subscription_status: "added",
+      subscription_status: "trial",
       subscription_ends_at: subscriptionEndsAt,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()

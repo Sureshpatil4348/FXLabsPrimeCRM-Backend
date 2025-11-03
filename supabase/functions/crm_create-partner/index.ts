@@ -7,7 +7,7 @@ import { genSaltSync, hashSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts"
 const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
 const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL");
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME");
-const LOGIN_URL = "https://fxlabsprime-crm-qa.netlify.app/login/partner";
+const LOGIN_URL = "https://fxlabsprime-crm.netlify.app/login/partner";
 // ============================================
 // Utility: Generate random 8-character alphanumeric password
 function generatePassword() {
@@ -45,12 +45,8 @@ function createErrorResponse(message, status = 500, code = null, details = []) {
   const errorResponse = {
     error: message
   };
-  if (code) {
-    errorResponse.code = code;
-  }
-  if (details.length > 0) {
-    errorResponse.details = details;
-  }
+  if (code) errorResponse.code = code;
+  if (details.length > 0) errorResponse.details = details;
   return new Response(JSON.stringify(errorResponse), {
     status,
     headers: {
@@ -66,9 +62,23 @@ function createValidationErrorResponse(zodError, status = 400) {
     }));
   return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
 }
-/**
- * Create email HTML template for partner
- */ function createEmailTemplate(email, password, fullName) {
+// Email Template
+function createEmailTemplate(email, password, fullName, slabs) {
+  // Format slabs into human-readable rows
+  const formatRange = (from, to)=>{
+    if (to === null) return `${from.toLocaleString()}+`;
+    return `${from.toLocaleString()} – ${to.toLocaleString()}`;
+  };
+  const slabRows = slabs.map((slab)=>`
+        <tr>
+          <td style="padding:10px 12px; border-bottom:1px solid #e6e7ec; text-align:left; color:#111;">
+            ${formatRange(slab.from, slab.to)}
+          </td>
+          <td style="padding:10px 12px; border-bottom:1px solid #e6e7ec; text-align:right; color:#07c05c; font-weight:600;">
+            ${slab.commission}%
+          </td>
+        </tr>
+      `).join("");
   return `
 <!DOCTYPE html>
 <html>
@@ -84,9 +94,7 @@ function createValidationErrorResponse(zodError, status = 400) {
     </style>
   </head>
   <body style="margin:0; padding:0; background-color:#f6f7fb; font-family: Arial, Helvetica, sans-serif; color:#222;">
-    <div class="preheader">
-      Welcome to the FxLabs Prime Partner Program!
-    </div>
+    <div class="preheader">Welcome to the FxLabs Prime Partner Program!</div>
 
     <!-- Header -->
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#07c05c; padding:16px 20px;">
@@ -130,6 +138,22 @@ function createValidationErrorResponse(zodError, status = 400) {
                   </tr>
                 </table>
 
+                <!-- Commission Slabs Table -->
+                <p style="margin:20px 0 8px; font-size:15px; color:#111; font-weight:600;">
+                  Your Commission Structure
+                </p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff; border:1px solid #e6e7ec; border-radius:8px; margin-bottom:20px; overflow:hidden;">
+                  <thead>
+                    <tr style="background:#f6f7fb;">
+                      <th style="padding:12px; text-align:left; font-weight:600; color:#111; font-size:14px;">Revenue Range</th>
+                      <th style="padding:12px; text-align:right; font-weight:600; color:#111; font-size:14px;">Commission</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${slabRows}
+                  </tbody>
+                </table>
+
                 <!-- CTA -->
                 <p style="margin:20px 0 0; text-align:center;">
                   <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to FxLabs Prime Partner Portal">
@@ -141,7 +165,7 @@ function createValidationErrorResponse(zodError, status = 400) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff7e6; border:1px solid #ffd59e; border-radius:8px; margin:20px 0 0;">
                   <tr>
                     <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#663c00;">
-                      <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes. Go to <strong>Your Profile</strong> and update your password immediately.
+                      <strong>Warning: Important:</strong> Please change your password after your first login for security.
                     </td>
                   </tr>
                 </table>
@@ -155,7 +179,6 @@ function createValidationErrorResponse(zodError, status = 400) {
                     </td>
                   </tr>
                 </table>
-
               </td>
             </tr>
           </table>
@@ -168,14 +191,6 @@ function createValidationErrorResponse(zodError, status = 400) {
       <tr>
         <td align="center" style="font-size:12px; color:#555; line-height:1.6; max-width:600px; padding:0 20px;">
           FxLabs Prime provides automated market insights and notifications for informational and educational purposes only.
-          Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade.
-          Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment.
-          Data may be delayed or inaccurate; FxLabs Prime assumes no responsibility for any trading losses.
-          Always verify information independently and comply with your local laws and regulations before acting on any signal.
-          Use of this service implies acceptance of our
-          <a href="https://fxlabsprime.com/terms-of-service" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Terms of Service</a>
-          and
-          <a href="https://fxlabsprime.com/privacy-policy" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Privacy Policy</a>.
           <br/><br/>
           Need help? Chat with us on Telegram:
           <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">@Fxlabs_prime</a>
@@ -186,11 +201,10 @@ function createValidationErrorResponse(zodError, status = 400) {
 </html>
   `.trim();
 }
-/**
- * Send email via SendGrid with 1 retry
- */ async function sendEmail(email, password, fullName) {
+// Send email via SendGrid with retry
+async function sendEmail(email, password, fullName, slabs) {
   if (!SENDGRID_API_KEY) {
-    console.error("❌ SendGrid API key not configured");
+    console.error("SendGrid API key not configured");
     return {
       success: false,
       error: "Email service not configured"
@@ -214,14 +228,13 @@ function createValidationErrorResponse(zodError, status = 400) {
     content: [
       {
         type: "text/html",
-        value: createEmailTemplate(email, password, fullName)
+        value: createEmailTemplate(email, password, fullName, slabs)
       }
     ]
   };
-  // Try sending email twice (initial + 1 retry)
   for(let attempt = 1; attempt <= 2; attempt++){
     try {
-      console.log(`📧 Sending email to ${email} (attempt ${attempt}/2)`);
+      console.log(`Sending email to ${email} (attempt ${attempt}/2)`);
       const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
         method: "POST",
         headers: {
@@ -231,33 +244,17 @@ function createValidationErrorResponse(zodError, status = 400) {
         body: JSON.stringify(emailData)
       });
       if (response.ok) {
-        console.log(`✅ Email sent successfully to ${email}`);
+        console.log(`Email sent successfully to ${email}`);
         return {
           success: true
         };
       }
       const errorText = await response.text();
-      console.error(`❌ SendGrid error for ${email} (${response.status}): ${errorText}`);
-      if (attempt === 1) {
-        console.log(`🔄 Retrying email to ${email}...`);
-        await new Promise((resolve)=>setTimeout(resolve, 1000));
-        continue;
-      }
-      return {
-        success: false,
-        error: `SendGrid error: ${response.status}`
-      };
+      console.error(`SendGrid error: ${response.status} - ${errorText}`);
+      if (attempt === 1) await new Promise((r)=>setTimeout(r, 1000));
     } catch (error) {
-      console.error(`❌ Exception sending email to ${email}:`, error);
-      if (attempt === 1) {
-        console.log(`🔄 Retrying email to ${email}...`);
-        await new Promise((resolve)=>setTimeout(resolve, 1000));
-        continue;
-      }
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Network error"
-      };
+      console.error(`Exception sending email:`, error);
+      if (attempt === 1) await new Promise((r)=>setTimeout(r, 1000));
     }
   }
   return {
@@ -265,33 +262,86 @@ function createValidationErrorResponse(zodError, status = 400) {
     error: "Failed after retry"
   };
 }
-// Initialize Supabase client
+// === Supabase Client ===
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Supabase env vars not set");
 }
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-// Input validation schema (password removed)
+// === Zod Validation Schemas ===
+const CommissionSlabSchema = z.object({
+  from: z.number().int().min(0, "from must be >= 0"),
+  to: z.number().int().min(0).nullable(),
+  commission: z.number().min(0, "commission must be >= 0").max(100, "commission cannot exceed 100%")
+}).superRefine((slab, ctx)=>{
+  if (slab.to !== null && slab.to <= slab.from) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [
+        "to"
+      ],
+      message: "to must be greater than from when not null"
+    });
+  }
+});
+const CommissionSlabsSchema = z.object({
+  slabs: z.array(CommissionSlabSchema).min(1, "At least one commission slab is required").refine((slabs)=>slabs[0].from === 0, {
+    message: "First slab must start at from: 0"
+  }).refine((slabs)=>{
+    for(let i = 0; i < slabs.length - 1; i++){
+      const curr = slabs[i];
+      const next = slabs[i + 1];
+      if (curr.to === null) return false;
+      if (curr.to + 1 !== next.from) return false;
+    }
+    return true;
+  }, {
+    message: "Slabs must be contiguous (no gaps)"
+  }).refine((slabs)=>slabs[slabs.length - 1].to === null, {
+    message: "Last slab must have to: null"
+  }).refine((slabs)=>{
+    const seen = new Set();
+    for (const slab of slabs){
+      if (slab.to === null) continue;
+      for(let i = slab.from; i <= slab.to; i++){
+        if (seen.has(i)) return false;
+        seen.add(i);
+      }
+    }
+    return true;
+  }, {
+    message: "Slabs must not overlap"
+  })
+}).transform((data)=>data);
 const createPartnerSchema = z.object({
   full_name: z.string().min(1, "Full name is required"),
-  email: z.string().email("Invalid email format"),
-  commission_percent: z.number().int().min(0, "Commission must be ≥ 0").max(50, "Commission must be ≤ 50").optional().default(10)
+  email: z.string().email("Invalid email format").regex(/^[^@]+@[^@]+\.[^@]+$/, "Invalid email format"),
+  commission_slabs: CommissionSlabsSchema.optional().default({
+    slabs: [
+      {
+        from: 0,
+        to: null,
+        commission: 2
+      }
+    ]
+  })
 });
+// === Main Handler ===
 serve(async (req)=>{
   if (req.method !== "POST") {
-    return createErrorResponse("Method not allowed", 405);
+    return createErrorResponse("Method not allowed", 405, "METHOD_NOT_ALLOWED");
   }
   try {
-    // === 1. Validate Admin-Token ===
+    // === 1. Admin Auth ===
     const adminToken = req.headers.get("Admin-Token") ?? req.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (!adminToken) {
-      return createErrorResponse("Admin-Token header required", 401);
+      return createErrorResponse("Admin-Token header required", 401, "UNAUTHORIZED");
     }
     let secret;
     try {
       secret = getJWTSecret();
-    } catch (error) {
+    } catch  {
       return createJWTSecretErrorResponse();
     }
     const { payload } = await jwtVerify(adminToken, secret, {
@@ -302,51 +352,55 @@ serve(async (req)=>{
       audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined
     });
     if (payload.role !== "admin") {
-      return createErrorResponse("Admin access required", 403);
+      return createErrorResponse("Admin access required", 403, "FORBIDDEN");
     }
-    // === 2. Parse and validate request body ===
+    // === 2. Parse & Validate Body ===
     let body;
     try {
       body = await req.json();
     } catch  {
       return createErrorResponse("Invalid JSON in request body", 400, "INVALID_JSON");
     }
-    const validated = createPartnerSchema.parse(body);
-    // === 3. Check if partner email already exists ===
-    const normalizedEmail = validated.email.trim().toLowerCase();
-    const { data: existing } = await supabase.from("crm_partner").select("id").eq("email", normalizedEmail).maybeSingle();
-    if (existing) {
-      return createErrorResponse("Partner with this email already exists", 409);
+    const parsed = createPartnerSchema.safeParse(body);
+    if (!parsed.success) {
+      return createValidationErrorResponse(parsed.error);
     }
-    // === 4. Generate random password ===
+    const { full_name, email: rawEmail, commission_slabs } = parsed.data;
+    // === 3. Normalize & Check Duplicate ===
+    const email = rawEmail.trim().toLowerCase();
+    const { data: existing } = await supabase.from("crm_partner").select("id").eq("email", email).maybeSingle();
+    if (existing) {
+      return createErrorResponse("Partner with this email already exists", 409, "DUPLICATE_EMAIL");
+    }
+    // === 4. Generate & Hash Password ===
     const generatedPassword = generatePassword();
-    console.log(`🔑 Generated password for ${normalizedEmail}: ${generatedPassword}`);
-    // === 5. Hash password and insert ===
+    console.log(`Generated password for ${email}: ${generatedPassword}`);
     const cost = Number.parseInt(Deno.env.get("BCRYPT_COST") ?? "12", 10) || 12;
     const salt = genSaltSync(cost);
     const passwordHash = hashSync(generatedPassword, salt);
+    // === 5. Insert Partner ===
     const { data: inserted, error: insertError } = await supabase.from("crm_partner").insert({
-      email: normalizedEmail,
-      full_name: validated.full_name,
+      email,
+      full_name,
       password_hash: passwordHash,
-      commission_percent: validated.commission_percent,
+      commission_slabs: commission_slabs,
       is_active: true
     }).select("email, full_name").single();
     if (insertError) {
-      if (insertError.code === "23505") {
-        return createErrorResponse("Partner with this email already exists", 409);
-      }
       console.error("Insert error:", insertError);
-      return createErrorResponse("Failed to create partner", 500);
+      if (insertError.code === "23505") {
+        return createErrorResponse("Partner with this email already exists", 409, "DUPLICATE_EMAIL");
+      }
+      return createErrorResponse("Failed to create partner", 500, "DB_INSERT_FAILED");
     }
-    // === 6. Send welcome email ===
-    const emailResult = await sendEmail(normalizedEmail, generatedPassword, validated.full_name);
+    // === 6. Send Welcome Email ===
+    const emailResult = await sendEmail(email, generatedPassword, full_name, commission_slabs.slabs);
     if (!emailResult.success) {
-      console.warn(`⚠️ Partner created but email failed for ${normalizedEmail}: ${emailResult.error}`);
+      console.warn(`Partner created but email failed: ${emailResult.error}`);
     }
-    // === 7. Success ===
+    // === 7. Success Response ===
     return new Response(JSON.stringify({
-      message: `Partner ${inserted.full_name} with Email - ${inserted.email} has been created successfully`,
+      message: `Partner ${inserted.full_name} created successfully`,
       email_sent: emailResult.success,
       email_error: emailResult.error || null
     }), {
@@ -356,13 +410,13 @@ serve(async (req)=>{
       }
     });
   } catch (error) {
+    console.error("Unexpected error:", error);
     if (error instanceof z.ZodError) {
       return createValidationErrorResponse(error);
     }
     if (error?.name === "JWTExpired" || error?.name === "JWSSignatureVerificationFailed") {
-      return createErrorResponse("Invalid or expired Admin-Token", 401);
+      return createErrorResponse("Invalid or expired Admin-Token", 401, "INVALID_TOKEN");
     }
-    console.error("Unexpected error:", error);
-    return createErrorResponse("Internal server error", 500);
+    return createErrorResponse("Internal server error", 500, "INTERNAL_ERROR");
   }
 });

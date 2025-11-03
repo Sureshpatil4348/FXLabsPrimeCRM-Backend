@@ -6,7 +6,8 @@ import { compareSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 // Allowed origins list
 const allowedOrigins = [
   "https://fxlabsprime-crm-qa.netlify.app",
-  "https://fxlabsprime-crm-dev.netlify.app"
+  "https://fxlabsprime-crm-dev.netlify.app",
+  "https://crm.fxlabsprime.com"
 ];
 // Base CORS headers (without origin)
 const baseCorsHeaders = {
