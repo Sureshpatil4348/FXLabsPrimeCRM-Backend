@@ -50,10 +50,20 @@ function createJWTSecretErrorResponse() {
   return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
 }
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+// Pagination configuration from environment (with safe fallbacks)
+const DEFAULT_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 5;
+})();
+const MAX_PAGE_SIZE = (()=>{
+  const n = parseInt(Deno.env.get("CRM_MAX_PAGE_SIZE") ?? "");
+  return Number.isFinite(n) && n > 0 ? n : 100;
+})();
 // Input validation schema
 const querySchema = z.object({
   partner_email: z.string().email("Invalid email format").optional(),
-  page: z.number().int().min(1).optional().default(1)
+  page: z.number().int().min(1).optional().default(1),
+  limit: z.number().int().min(1).max(MAX_PAGE_SIZE).optional()
 });
 serve(async (req)=>{
   if (req.method !== "GET") {
@@ -87,9 +97,16 @@ serve(async (req)=>{
     const url = new URL(req.url);
     const partnerEmailParam = url.searchParams.get("partner_email");
     const pageParam = url.searchParams.get("page");
+    const limitParam = url.searchParams.get("limit");
+    // Parse and validate parameters
+    const rawPage = pageParam ? Number(pageParam) : 1;
+    const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+    const rawLimit = limitParam ? Number(limitParam) : DEFAULT_PAGE_SIZE;
+    const limit = Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= MAX_PAGE_SIZE ? Math.floor(rawLimit) : rawLimit > MAX_PAGE_SIZE ? MAX_PAGE_SIZE : DEFAULT_PAGE_SIZE;
     const validated = querySchema.parse({
       partner_email: partnerEmailParam || undefined,
-      page: pageParam ? parseInt(pageParam) : 1
+      page: page,
+      limit: limit
     });
     // Determine partner email and ID
     let targetPartnerEmail = null;
@@ -118,12 +135,9 @@ serve(async (req)=>{
         targetPartnerEmail = partnerData.email;
       }
     }
-    // Pagination
-    const envDefault = parseInt(Deno.env.get("CRM_DEFAULT_PAGE_SIZE") ?? "20");
-    const limit = Number.isFinite(envDefault) && envDefault > 0 ? envDefault : 20;
-    const page = validated.page;
+    // Calculate offset based on the ACTUAL limit being used
     const offset = (page - 1) * limit;
-    // Build user query
+    // Build user query with proper pagination
     let query = supabase.from("crm_user_metadata").select("email, region, subscription_status, subscription_ends_at, created_at, converted_at, user_id", {
       count: "exact"
     }).order("created_at", {
@@ -137,7 +151,7 @@ serve(async (req)=>{
       console.error("Users fetch error:", usersError);
       throw new Error("Failed to fetch users");
     }
-    // Fetch payment data for users
+    // Fetch payment data for users on the current page only
     const userIds = users?.map((u)=>u.user_id) || [];
     let payments = [];
     if (userIds.length > 0) {
@@ -168,7 +182,7 @@ serve(async (req)=>{
         };
       }
     }
-    // Calculate pagination info
+    // Calculate pagination info with standardized field names
     const totalUsers = count || 0;
     const totalPages = Math.ceil(totalUsers / limit);
     const hasNextPage = page < totalPages;

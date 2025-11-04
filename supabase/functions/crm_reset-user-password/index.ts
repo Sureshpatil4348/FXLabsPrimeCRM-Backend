@@ -1,26 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { z } from "https://esm.sh/zod@3.22.4";
 import { jwtVerify } from "https://esm.sh/jose@4.14.4";
-import { genSaltSync, hashSync, compareSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
-// ========== SENDGRID CONFIGURATION ==========
+import { z } from "https://esm.sh/zod@3.22.4";
+// SendGrid Configuration
 const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
 const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL") || "noreply@yourdomain.com";
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME") || "Your CRM Team";
-const LOGIN_URL = "https://fxlabsprime-crm-qa.netlify.app/login/admin";
-// ============================================
-// Utility: Generate random 8-character alphanumeric password
-function generatePassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let password = '';
-  const array = new Uint8Array(8);
-  crypto.getRandomValues(array);
-  for(let i = 0; i < 8; i++){
-    password += chars[array[i] % chars.length];
-  }
-  return password;
-}
-// Utility: Get JWT secret
+const LOGIN_URL = "https://fxlabsprime.com";
+// JWT utilities
 function getJWTSecret() {
   const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
   if (!secret) {
@@ -28,7 +15,6 @@ function getJWTSecret() {
   }
   return new TextEncoder().encode(secret);
 }
-// Utility: JWT Secret error
 function createJWTSecretErrorResponse() {
   return new Response(JSON.stringify({
     error: "JWT secret configuration error",
@@ -40,17 +26,12 @@ function createJWTSecretErrorResponse() {
     }
   });
 }
-// Utility: Standard error response
 function createErrorResponse(message, status = 500, code = null, details = []) {
   const errorResponse = {
     error: message
   };
-  if (code) {
-    errorResponse.code = code;
-  }
-  if (details.length > 0) {
-    errorResponse.details = details;
-  }
+  if (code) errorResponse.code = code;
+  if (details?.length > 0) errorResponse.details = details;
   return new Response(JSON.stringify(errorResponse), {
     status,
     headers: {
@@ -58,23 +39,35 @@ function createErrorResponse(message, status = 500, code = null, details = []) {
     }
   });
 }
-// Utility: Zod validation errors
 function createValidationErrorResponse(zodError, status = 400) {
   const details = zodError.issues.map((issue)=>({
-      field: issue.path.join("."),
+      field: issue.path?.join(".") || "",
       message: issue.message
     }));
   return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
 }
+const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+// Validation schema
+const resetPasswordSchema = z.object({
+  email: z.string().email("Invalid email format")
+});
 /**
- * Create email HTML template for admin
- */ function createEmailTemplate(email, password, fullName) {
+ * Generate 8-digit alphanumeric password
+ */ function generatePassword() {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const array = new Uint8Array(8);
+  crypto.getRandomValues(array);
+  return Array.from(array, (byte)=>charset[byte % charset.length]).join("");
+}
+/**
+ * Create password reset email HTML template
+ */ function createPasswordResetEmailTemplate(email, password) {
   return `
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>Welcome to FxLabs Prime Admin Portal</title>
+    <title>Password Reset - FxLabs Prime</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       .preheader { display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden; mso-hide:all; }
@@ -85,14 +78,14 @@ function createValidationErrorResponse(zodError, status = 400) {
   </head>
   <body style="margin:0; padding:0; background-color:#f6f7fb; font-family: Arial, Helvetica, sans-serif; color:#222;">
     <div class="preheader">
-      Welcome to the FxLabs Prime Admin Portal!
+      Your FxLabs Prime password has been reset.
     </div>
 
     <!-- Header -->
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#07c05c; padding:16px 20px;">
       <tr>
         <td align="center" style="color:#fff; font-size:18px; font-weight:600;">
-          FxLabs Prime Admin Portal
+          FxLabs Prime
         </td>
       </tr>
     </table>
@@ -104,23 +97,23 @@ function createValidationErrorResponse(zodError, status = 400) {
           <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:90%; background-color:#ffffff; border-radius:12px; padding:30px;">
             <tr>
               <td>
-                <h2 style="margin:0 0 12px; color:#111;">Welcome, ${fullName}!</h2>
+                <h2 style="margin:0 0 12px; color:#111;">Password Reset Successful</h2>
                 <p style="margin:0 0 16px;">
-                  You have been added as an administrator to the <strong>FxLabs Prime Admin Portal</strong>.
+                  Your password for <strong>FxLabs Prime</strong> has been reset. Below are your new login credentials.
                 </p>
 
                 <!-- Credentials Box -->
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0;">
                   <tr>
                     <td style="padding:20px; font-size:14px; line-height:1.6;">
-                      <strong style="color:#111; font-size:15px;">Your Admin Login Credentials</strong>
+                      <strong style="color:#111; font-size:15px;">Your New Login Credentials</strong>
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
                         <tr>
                           <td style="padding:8px 0; color:#555; font-weight:600;">Email:</td>
                           <td style="padding:8px 0; color:#111;">${email}</td>
                         </tr>
                         <tr>
-                          <td style="padding:8px 0; color:#555; font-weight:600;">Password:</td>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">New Password:</td>
                           <td style="padding:8px 0;">
                             <span style="font-family: 'Courier New', monospace; background-color:#fff; padding:6px 12px; border-radius:4px; font-size:16px; font-weight:bold; color:#07c05c; letter-spacing:2px; border:1px solid #e6e7ec;">${password}</span>
                           </td>
@@ -132,8 +125,8 @@ function createValidationErrorResponse(zodError, status = 400) {
 
                 <!-- CTA -->
                 <p style="margin:20px 0 0; text-align:center;">
-                  <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to FxLabs Prime Admin Portal">
-                    Login to Admin Portal
+                  <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to FxLabs Prime">
+                    Login to FxLabs Prime
                   </a>
                 </p>
 
@@ -141,7 +134,17 @@ function createValidationErrorResponse(zodError, status = 400) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff7e6; border:1px solid #ffd59e; border-radius:8px; margin:20px 0 0;">
                   <tr>
                     <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#663c00;">
-                      <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes. Go to <strong>Your Profile</strong> and update your password immediately.
+                      <strong>Important:</strong> For security purposes, please change your password immediately after logging in. Go to <strong>Your Profile</strong> and update your password.
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Security Notice -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fee; border:1px solid #fcc; border-radius:8px; margin:16px 0 0;">
+                  <tr>
+                    <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#c00;">
+                      <strong>Security Notice:</strong> If you did not request this password reset, please contact our support team immediately at 
+                      <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#c00; text-decoration:none; font-weight:600;">@Fxlabs_prime</a>
                     </td>
                   </tr>
                 </table>
@@ -187,10 +190,10 @@ function createValidationErrorResponse(zodError, status = 400) {
   `.trim();
 }
 /**
- * Send email via SendGrid with 1 retry
- */ async function sendEmail(email, password, fullName) {
+ * Send password reset email via SendGrid with 1 retry
+ */ async function sendPasswordResetEmail(email, password) {
   if (!SENDGRID_API_KEY) {
-    console.error("❌ SendGrid API key not configured");
+    console.error("SendGrid API key not configured");
     return {
       success: false,
       error: "Email service not configured"
@@ -204,7 +207,7 @@ function createValidationErrorResponse(zodError, status = 400) {
             email
           }
         ],
-        subject: "Welcome to Your CRM - Admin Account Created"
+        subject: "Password Reset - FxLabs Prime"
       }
     ],
     from: {
@@ -214,32 +217,33 @@ function createValidationErrorResponse(zodError, status = 400) {
     content: [
       {
         type: "text/html",
-        value: createEmailTemplate(email, password, fullName)
+        value: createPasswordResetEmailTemplate(email, password)
       }
     ]
   };
   // Try sending email twice (initial + 1 retry)
   for(let attempt = 1; attempt <= 2; attempt++){
     try {
-      console.log(`📧 Sending email to ${email} (attempt ${attempt}/2)`);
+      console.log(`Sending password reset email to ${email} (attempt ${attempt}/2)`);
       const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${SENDGRID_API_KEY}`,
+          Authorization: `Bearer ${SENDGRID_API_KEY}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify(emailData)
       });
       if (response.ok) {
-        console.log(`✅ Email sent successfully to ${email}`);
+        console.log(`Password reset email sent successfully to ${email}`);
         return {
           success: true
         };
       }
       const errorText = await response.text();
-      console.error(`❌ SendGrid error for ${email} (${response.status}): ${errorText}`);
+      console.error(`SendGrid error for ${email} (${response.status}): ${errorText}`);
+      // Retry only on first attempt
       if (attempt === 1) {
-        console.log(`🔄 Retrying email to ${email}...`);
+        console.log(`Retrying email to ${email}...`);
         await new Promise((resolve)=>setTimeout(resolve, 1000));
         continue;
       }
@@ -248,9 +252,10 @@ function createValidationErrorResponse(zodError, status = 400) {
         error: `SendGrid error: ${response.status}`
       };
     } catch (error) {
-      console.error(`❌ Exception sending email to ${email}:`, error);
+      console.error(`Exception sending email to ${email}:`, error);
+      // Retry only on first attempt
       if (attempt === 1) {
-        console.log(`🔄 Retrying email to ${email}...`);
+        console.log(`Retrying email to ${email}...`);
         await new Promise((resolve)=>setTimeout(resolve, 1000));
         continue;
       }
@@ -265,20 +270,12 @@ function createValidationErrorResponse(zodError, status = 400) {
     error: "Failed after retry"
   };
 }
-// Initialize Supabase client
-const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-// Input validation schema (password removed, current_admin_password kept)
-const createAdminSchema = z.object({
-  full_name: z.string().min(1, "Full name is required"),
-  email: z.string().email("Invalid email format"),
-  current_admin_password: z.string().min(1, "Current admin password is required")
-});
 serve(async (req)=>{
   if (req.method !== "POST") {
     return createErrorResponse("Method not allowed", 405);
   }
   try {
-    // === 1. Validate Admin-Token ===
+    // Validate Admin-Token only
     const adminToken = req.headers.get("Admin-Token");
     if (!adminToken) {
       return createErrorResponse("Admin-Token header required", 401);
@@ -299,74 +296,61 @@ serve(async (req)=>{
     if (payload.role !== "admin") {
       return createErrorResponse("Admin access required", 403);
     }
-    // Get current admin's ID from JWT payload
-    const currentAdminId = payload.sub;
-    if (!currentAdminId) {
-      return createErrorResponse("Invalid admin token: user ID not found", 401);
-    }
-    // === 2. Parse and validate request body ===
+    // Parse and validate request body
     let body;
     try {
       body = await req.json();
     } catch  {
       return createErrorResponse("Invalid JSON in request body", 400, "INVALID_JSON");
     }
-    const validated = createAdminSchema.parse(body);
-    // === 3. Fetch and verify current admin's password ===
-    const { data: currentAdmin, error: fetchError } = await supabase.from("crm_admin").select("id, password_hash").eq("id", currentAdminId).single();
-    if (fetchError) {
-      console.error("Database error fetching current admin:", fetchError);
-      return createErrorResponse("Database error occurred", 500);
-    }
-    if (!currentAdmin) {
-      return createErrorResponse("Current admin not found", 404);
-    }
-    // Verify the current admin's password
-    const isPasswordValid = compareSync(validated.current_admin_password, currentAdmin.password_hash);
-    if (!isPasswordValid) {
-      return createErrorResponse("Current admin password is incorrect", 403);
-    }
-    // === 4. Check if new admin email already exists ===
+    const validated = resetPasswordSchema.parse(body);
     const normalizedEmail = validated.email.trim().toLowerCase();
-    const { data: existing, error: checkError } = await supabase.from("crm_admin").select("id").eq("email", normalizedEmail).maybeSingle();
-    if (checkError) {
-      console.error("Email check error:", checkError);
-      return createErrorResponse("Failed to check email availability", 500);
+    console.log(`Processing password reset for email: ${normalizedEmail}`);
+    // Fetch user to get user_id
+    const { data: user, error: fetchError } = await supabase.from("crm_user_metadata").select("user_id, email").eq("email", normalizedEmail).maybeSingle();
+    if (fetchError) {
+      console.error("Error fetching user:", fetchError.message);
+      return createErrorResponse(`Failed to fetch user: ${fetchError.message}`, 500, "FETCH_ERROR");
     }
-    if (existing) {
-      return createErrorResponse("Admin with this email already exists", 409);
+    if (!user) {
+      return createErrorResponse("User not found", 404, "USER_NOT_FOUND");
     }
-    // === 5. Generate random password ===
-    const generatedPassword = generatePassword();
-    console.log(`🔑 Generated password for ${normalizedEmail}: ${generatedPassword}`);
-    // === 6. Hash password and insert ===
-    const salt = genSaltSync(12);
-    const passwordHash = hashSync(generatedPassword, salt);
-    const { data: inserted, error: insertError } = await supabase.from("crm_admin").insert({
-      email: normalizedEmail,
-      full_name: validated.full_name,
-      password_hash: passwordHash
-    }).select("email, full_name").single();
-    if (insertError) {
-      if (insertError.code === "23505" || insertError.message && (insertError.message.toLowerCase().includes("email") || insertError.message.toLowerCase().includes("unique") || insertError.message.toLowerCase().includes("key"))) {
-        console.error("Email uniqueness violation:", insertError);
-        return createErrorResponse("Email already exists", 409);
-      }
-      console.error("Insert error:", insertError);
-      return createErrorResponse("Failed to create admin", 500);
+    // Generate new password
+    const newPassword = generatePassword();
+    console.log(`Generated new password for ${user.email}: ${newPassword}`);
+    // Update password in auth
+    const { error: updatePasswordError } = await supabase.auth.admin.updateUserById(user.user_id, {
+      password: newPassword
+    });
+    if (updatePasswordError) {
+      console.error("Error updating password:", updatePasswordError.message);
+      return createErrorResponse(`Failed to update password: ${updatePasswordError.message}`, 500, "PASSWORD_UPDATE_ERROR");
     }
-    // === 7. Send welcome email ===
-    const emailResult = await sendEmail(normalizedEmail, generatedPassword, validated.full_name);
+    console.log(`Password updated successfully for ${user.email}`);
+    // Send email with new password
+    const emailResult = await sendPasswordResetEmail(user.email, newPassword);
     if (!emailResult.success) {
-      console.warn(`⚠️ Admin created but email failed for ${normalizedEmail}: ${emailResult.error}`);
+      console.warn(`Password was reset but email failed for ${user.email}: ${emailResult.error}`);
+      return new Response(JSON.stringify({
+        message: "Password reset successfully but email delivery failed",
+        email: user.email,
+        email_sent: false,
+        email_error: emailResult.error,
+        warning: "User password has been changed but they were not notified via email"
+      }), {
+        status: 207,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
     }
-    // === 8. Success ===
+    console.log(`Password reset complete for ${user.email}`);
     return new Response(JSON.stringify({
-      message: `Admin ${inserted.full_name} with Email - ${inserted.email} has been created successfully`,
-      email_sent: emailResult.success,
-      email_error: emailResult.error || null
+      message: "Password reset successfully and email sent",
+      email: user.email,
+      email_sent: true
     }), {
-      status: 201,
+      status: 200,
       headers: {
         "Content-Type": "application/json"
       }
@@ -376,7 +360,10 @@ serve(async (req)=>{
       return createValidationErrorResponse(error);
     }
     if (error?.name === "JWTExpired" || error?.name === "JWSSignatureVerificationFailed") {
-      return createErrorResponse("Invalid or expired Admin-Token", 401);
+      return createErrorResponse("Invalid or expired token", 401);
+    }
+    if (error?.code === "ERR_JWS_INVALID") {
+      return createErrorResponse("Invalid JWT format", 400);
     }
     console.error("Unexpected error:", error);
     return createErrorResponse("Internal server error", 500);
