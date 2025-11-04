@@ -7,7 +7,7 @@ import { hashSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
 const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL") || "noreply@fxlabsprime.com";
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME") || "FxLabs Prime Admin";
-const LOGIN_URL = "https://fxlabsprime-crm.netlify.app/login/admin";
+const LOGIN_URL = "https://crm.fxlabsprime.com/login/admin";
 // JWT Secret
 function getJWTSecret() {
   const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");

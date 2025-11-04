@@ -1,72 +1,94 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { jwtVerify } from "https://esm.sh/jose@4.14.4";
 import { z } from "https://esm.sh/zod@3.22.4";
+import { jwtVerify } from "https://esm.sh/jose@4.14.4";
+import {
+    genSaltSync,
+    hashSync,
+    compareSync,
+} from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 // ========== SENDGRID CONFIGURATION ==========
 const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
 const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL") || "noreply@yourdomain.com";
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME") || "Your CRM Team";
-const LOGIN_URL = "https://fxlabsprime-crm.netlify.app/login/admin";
+const LOGIN_URL = "https://crm.fxlabsprime.com/login/admin";
 // ============================================
-// Utility: Generate random 8-character alphanumeric password (kept for consistency)
+// Utility: Generate random 8-character alphanumeric password
 function generatePassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let password = '';
-  const array = new Uint8Array(8);
-  crypto.getRandomValues(array);
-  for(let i = 0; i < 8; i++){
-    password += chars[array[i] % chars.length];
-  }
-  return password;
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    let password = "";
+    const array = new Uint8Array(8);
+    crypto.getRandomValues(array);
+    for (let i = 0; i < 8; i++) {
+        password += chars[array[i] % chars.length];
+    }
+    return password;
 }
 // Utility: Get JWT secret
 function getJWTSecret() {
-  const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
-  if (!secret) {
-    throw new Error("CRM_CUSTOM_JWT_SECRET environment variable is not set");
-  }
-  return new TextEncoder().encode(secret);
+    const secret = Deno.env.get("CRM_CUSTOM_JWT_SECRET");
+    if (!secret) {
+        throw new Error(
+            "CRM_CUSTOM_JWT_SECRET environment variable is not set"
+        );
+    }
+    return new TextEncoder().encode(secret);
 }
+// Utility: JWT Secret error
 function createJWTSecretErrorResponse() {
-  return new Response(JSON.stringify({
-    error: "JWT secret configuration error",
-    code: "JWT_SECRET_ERROR"
-  }), {
-    status: 500,
-    headers: {
-      "Content-Type": "application/json"
-    }
-  });
+    return new Response(
+        JSON.stringify({
+            error: "JWT secret configuration error",
+            code: "JWT_SECRET_ERROR",
+        }),
+        {
+            status: 500,
+            headers: {
+                "Content-Type": "application/json",
+            },
+        }
+    );
 }
+// Utility: Standard error response
 function createErrorResponse(message, status = 500, code = null, details = []) {
-  const errorResponse = {
-    error: message
-  };
-  if (code) errorResponse.code = code;
-  if (details?.length > 0) errorResponse.details = details;
-  return new Response(JSON.stringify(errorResponse), {
-    status,
-    headers: {
-      "Content-Type": "application/json"
+    const errorResponse = {
+        error: message,
+    };
+    if (code) {
+        errorResponse.code = code;
     }
-  });
+    if (details.length > 0) {
+        errorResponse.details = details;
+    }
+    return new Response(JSON.stringify(errorResponse), {
+        status,
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
 }
+// Utility: Zod validation errors
 function createValidationErrorResponse(zodError, status = 400) {
-  const details = zodError.issues.map((issue)=>({
-      field: issue.path?.join(".") || "",
-      message: issue.message
+    const details = zodError.issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
     }));
-  return createErrorResponse("Validation error", status, "VALIDATION_ERROR", details);
+    return createErrorResponse(
+        "Validation error",
+        status,
+        "VALIDATION_ERROR",
+        details
+    );
 }
 /**
- * Email template when admin email is changed
- */ function createEmailChangeTemplate(oldEmail, newEmail, fullName) {
-  return `
+ * Create email HTML template for admin
+ */ function createEmailTemplate(email, password, fullName) {
+    return `
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>Admin Email Updated</title>
+    <title>Welcome to FxLabs Prime Admin Portal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       .preheader { display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden; mso-hide:all; }
@@ -77,7 +99,7 @@ function createValidationErrorResponse(zodError, status = 400) {
   </head>
   <body style="margin:0; padding:0; background-color:#f6f7fb; font-family: Arial, Helvetica, sans-serif; color:#222;">
     <div class="preheader">
-      Your admin email has been updated.
+      Welcome to the FxLabs Prime Admin Portal!
     </div>
 
     <!-- Header -->
@@ -96,24 +118,26 @@ function createValidationErrorResponse(zodError, status = 400) {
           <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:90%; background-color:#ffffff; border-radius:12px; padding:30px;">
             <tr>
               <td>
-                <h2 style="margin:0 0 12px; color:#111;">Hello, ${fullName}!</h2>
+                <h2 style="margin:0 0 12px; color:#111;">Welcome, ${fullName}!</h2>
                 <p style="margin:0 0 16px;">
-                  Your admin account email has been successfully updated.
+                  You have been added as an administrator to the <strong>FxLabs Prime Admin Portal</strong>.
                 </p>
 
-                <!-- Change Summary -->
+                <!-- Credentials Box -->
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0;">
                   <tr>
                     <td style="padding:20px; font-size:14px; line-height:1.6;">
-                      <strong style="color:#111; font-size:15px;">Email Change Summary</strong>
+                      <strong style="color:#111; font-size:15px;">Your Admin Login Credentials</strong>
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
                         <tr>
-                          <td style="padding:8px 0; color:#555; font-weight:600;">Old Email:</td>
-                          <td style="padding:8px 0; color:#111;">${oldEmail}</td>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">Email:</td>
+                          <td style="padding:8px 0; color:#111;">${email}</td>
                         </tr>
                         <tr>
-                          <td style="padding:8px 0; color:#555; font-weight:600;">New Email:</td>
-                          <td style="padding:8px 0; color:#07c05c; font-weight:bold;">${newEmail}</td>
+                          <td style="padding:8px 0; color:#555; font-weight:600;">Password:</td>
+                          <td style="padding:8px 0;">
+                            <span style="font-family: 'Courier New', monospace; background-color:#fff; padding:6px 12px; border-radius:4px; font-size:16px; font-weight:bold; color:#07c05c; letter-spacing:2px; border:1px solid #e6e7ec;">${password}</span>
+                          </td>
                         </tr>
                       </table>
                     </td>
@@ -122,16 +146,16 @@ function createValidationErrorResponse(zodError, status = 400) {
 
                 <!-- CTA -->
                 <p style="margin:20px 0 0; text-align:center;">
-                  <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to Admin Portal">
-                    Login with New Email
+                  <a href="${LOGIN_URL}" style="display:inline-block; background-color:#07c05c; color:#ffffff; text-decoration:none; padding:12px 32px; border-radius:6px; font-weight:bold; font-size:15px;" aria-label="Login to FxLabs Prime Admin Portal">
+                    Login to Admin Portal
                   </a>
                 </p>
 
-                <!-- Security Notice -->
+                <!-- Important Notice -->
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff7e6; border:1px solid #ffd59e; border-radius:8px; margin:20px 0 0;">
                   <tr>
                     <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#663c00;">
-                      <strong>Security Tip:</strong> If you didn’t request this change, please contact support immediately via Telegram.
+                      <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes. Go to <strong>Your Profile</strong> and update your password immediately.
                     </td>
                   </tr>
                 </table>
@@ -178,228 +202,256 @@ function createValidationErrorResponse(zodError, status = 400) {
 }
 /**
  * Send email via SendGrid with 1 retry
- */ async function sendEmailChangeNotification(oldEmail, newEmail, fullName) {
-  if (!SENDGRID_API_KEY) {
-    console.error("SendGrid API key not configured");
-    return {
-      success: false,
-      error: "Email service not configured"
-    };
-  }
-  const emailData = {
-    personalizations: [
-      {
-        to: [
-          {
-            email: newEmail
-          }
-        ],
-        subject: "Your Admin Email Has Been Updated"
-      }
-    ],
-    from: {
-      email: FROM_EMAIL,
-      name: FROM_NAME
-    },
-    content: [
-      {
-        type: "text/html",
-        value: createEmailChangeTemplate(oldEmail, newEmail, fullName)
-      }
-    ]
-  };
-  // Try sending email twice (initial + 1 retry)
-  for(let attempt = 1; attempt <= 2; attempt++){
-    try {
-      console.log(`Sending email change notification to ${newEmail} (attempt ${attempt}/2)`);
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SENDGRID_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(emailData)
-      });
-      if (response.ok) {
-        console.log(`Email change notification sent to ${newEmail}`);
+ */ async function sendEmail(email, password, fullName) {
+    if (!SENDGRID_API_KEY) {
+        console.error("❌ SendGrid API key not configured");
         return {
-          success: true
+            success: false,
+            error: "Email service not configured",
         };
-      }
-      const errorText = await response.text();
-      console.error(`SendGrid error (${response.status}): ${errorText}`);
-      if (attempt === 1) {
-        console.log(`Retrying email to ${newEmail}...`);
-        await new Promise((resolve)=>setTimeout(resolve, 1000));
-        continue;
-      }
-      return {
-        success: false,
-        error: `SendGrid error: ${response.status}`
-      };
-    } catch (error) {
-      console.error(`Exception sending email to ${newEmail}:`, error);
-      if (attempt === 1) {
-        console.log(`Retrying email to ${newEmail}...`);
-        await new Promise((resolve)=>setTimeout(resolve, 1000));
-        continue;
-      }
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Network error"
-      };
     }
-  }
-  return {
-    success: false,
-    error: "Failed after retry"
-  };
+    const emailData = {
+        personalizations: [
+            {
+                to: [
+                    {
+                        email,
+                    },
+                ],
+                subject: "Welcome to Your CRM - Admin Account Created",
+            },
+        ],
+        from: {
+            email: FROM_EMAIL,
+            name: FROM_NAME,
+        },
+        content: [
+            {
+                type: "text/html",
+                value: createEmailTemplate(email, password, fullName),
+            },
+        ],
+    };
+    // Try sending email twice (initial + 1 retry)
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            console.log(`📧 Sending email to ${email} (attempt ${attempt}/2)`);
+            const response = await fetch(
+                "https://api.sendgrid.com/v3/mail/send",
+                {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${SENDGRID_API_KEY}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(emailData),
+                }
+            );
+            if (response.ok) {
+                console.log(`✅ Email sent successfully to ${email}`);
+                return {
+                    success: true,
+                };
+            }
+            const errorText = await response.text();
+            console.error(
+                `❌ SendGrid error for ${email} (${response.status}): ${errorText}`
+            );
+            if (attempt === 1) {
+                console.log(`🔄 Retrying email to ${email}...`);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                continue;
+            }
+            return {
+                success: false,
+                error: `SendGrid error: ${response.status}`,
+            };
+        } catch (error) {
+            console.error(`❌ Exception sending email to ${email}:`, error);
+            if (attempt === 1) {
+                console.log(`🔄 Retrying email to ${email}...`);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                continue;
+            }
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : "Network error",
+            };
+        }
+    }
+    return {
+        success: false,
+        error: "Failed after retry",
+    };
 }
 // Initialize Supabase client
-const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
-// Validation schema
-const updateAdminSchema = z.object({
-  admin_id: z.string().uuid("Invalid admin ID format"),
-  email: z.string().email("Invalid email format").optional(),
-  full_name: z.string().min(1, "Full name cannot be empty").optional()
+const supabase = createClient(
+    Deno.env.get("SUPABASE_URL"),
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+);
+// Input validation schema (password removed, current_admin_password kept)
+const createAdminSchema = z.object({
+    full_name: z.string().min(1, "Full name is required"),
+    email: z.string().email("Invalid email format"),
+    current_admin_password: z
+        .string()
+        .min(1, "Current admin password is required"),
 });
-serve(async (req)=>{
-  if (req.method !== "PATCH" && req.method !== "PUT") {
-    return createErrorResponse("Method not allowed", 405);
-  }
-  try {
-    // Validate Admin-Token
-    const adminToken = req.headers.get("Admin-Token");
-    if (!adminToken) {
-      return createErrorResponse("Admin-Token header required", 401);
+serve(async (req) => {
+    if (req.method !== "POST") {
+        return createErrorResponse("Method not allowed", 405);
     }
-    let secret;
     try {
-      secret = getJWTSecret();
+        // === 1. Validate Admin-Token ===
+        const adminToken = req.headers.get("Admin-Token");
+        if (!adminToken) {
+            return createErrorResponse("Admin-Token header required", 401);
+        }
+        let secret;
+        try {
+            secret = getJWTSecret();
+        } catch (error) {
+            return createJWTSecretErrorResponse();
+        }
+        const { payload } = await jwtVerify(adminToken, secret, {
+            algorithms: ["HS256"],
+            issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
+            audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined,
+        });
+        if (payload.role !== "admin") {
+            return createErrorResponse("Admin access required", 403);
+        }
+        // Get current admin's ID from JWT payload
+        const currentAdminId = payload.sub;
+        if (!currentAdminId) {
+            return createErrorResponse(
+                "Invalid admin token: user ID not found",
+                401
+            );
+        }
+        // === 2. Parse and validate request body ===
+        let body;
+        try {
+            body = await req.json();
+        } catch {
+            return createErrorResponse(
+                "Invalid JSON in request body",
+                400,
+                "INVALID_JSON"
+            );
+        }
+        const validated = createAdminSchema.parse(body);
+        // === 3. Fetch and verify current admin's password ===
+        const { data: currentAdmin, error: fetchError } = await supabase
+            .from("crm_admin")
+            .select("id, password_hash")
+            .eq("id", currentAdminId)
+            .single();
+        if (fetchError) {
+            console.error("Database error fetching current admin:", fetchError);
+            return createErrorResponse("Database error occurred", 500);
+        }
+        if (!currentAdmin) {
+            return createErrorResponse("Current admin not found", 404);
+        }
+        // Verify the current admin's password
+        const isPasswordValid = compareSync(
+            validated.current_admin_password,
+            currentAdmin.password_hash
+        );
+        if (!isPasswordValid) {
+            return createErrorResponse(
+                "Current admin password is incorrect",
+                403
+            );
+        }
+        // === 4. Check if new admin email already exists ===
+        const normalizedEmail = validated.email.trim().toLowerCase();
+        const { data: existing, error: checkError } = await supabase
+            .from("crm_admin")
+            .select("id")
+            .eq("email", normalizedEmail)
+            .maybeSingle();
+        if (checkError) {
+            console.error("Email check error:", checkError);
+            return createErrorResponse(
+                "Failed to check email availability",
+                500
+            );
+        }
+        if (existing) {
+            return createErrorResponse(
+                "Admin with this email already exists",
+                409
+            );
+        }
+        // === 5. Generate random password ===
+        const generatedPassword = generatePassword();
+        console.log(
+            `🔑 Generated password for ${normalizedEmail}: ${generatedPassword}`
+        );
+        // === 6. Hash password and insert ===
+        const salt = genSaltSync(12);
+        const passwordHash = hashSync(generatedPassword, salt);
+        const { data: inserted, error: insertError } = await supabase
+            .from("crm_admin")
+            .insert({
+                email: normalizedEmail,
+                full_name: validated.full_name,
+                password_hash: passwordHash,
+            })
+            .select("email, full_name")
+            .single();
+        if (insertError) {
+            if (
+                insertError.code === "23505" ||
+                (insertError.message &&
+                    (insertError.message.toLowerCase().includes("email") ||
+                        insertError.message.toLowerCase().includes("unique") ||
+                        insertError.message.toLowerCase().includes("key")))
+            ) {
+                console.error("Email uniqueness violation:", insertError);
+                return createErrorResponse("Email already exists", 409);
+            }
+            console.error("Insert error:", insertError);
+            return createErrorResponse("Failed to create admin", 500);
+        }
+        // === 7. Send welcome email ===
+        const emailResult = await sendEmail(
+            normalizedEmail,
+            generatedPassword,
+            validated.full_name
+        );
+        if (!emailResult.success) {
+            console.warn(
+                `⚠️ Admin created but email failed for ${normalizedEmail}: ${emailResult.error}`
+            );
+        }
+        // === 8. Success ===
+        return new Response(
+            JSON.stringify({
+                message: `Admin ${inserted.full_name} with Email - ${inserted.email} has been created successfully`,
+                email_sent: emailResult.success,
+                email_error: emailResult.error || null,
+            }),
+            {
+                status: 201,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            }
+        );
     } catch (error) {
-      return createJWTSecretErrorResponse();
-    }
-    const { payload } = await jwtVerify(adminToken, secret, {
-      algorithms: [
-        "HS256"
-      ],
-      issuer: Deno.env.get("CRM_JWT_ISSUER") ?? undefined,
-      audience: Deno.env.get("CRM_JWT_AUDIENCE") ?? undefined
-    });
-    if (payload.role !== "admin") {
-      return createErrorResponse("Admin access required", 403);
-    }
-    // Parse and validate request body
-    let body;
-    try {
-      body = await req.json();
-    } catch  {
-      return createErrorResponse("Invalid JSON in request body", 400, "INVALID_JSON");
-    }
-    const validated = updateAdminSchema.parse(body);
-    // Check if at least one field to update is provided
-    if (!validated.email && !validated.full_name) {
-      return createErrorResponse("At least one field must be provided for update", 400, "NO_FIELDS_TO_UPDATE");
-    }
-    console.log(`Processing update for admin_id: ${validated.admin_id}`);
-    // Fetch existing admin data
-    const { data: existingAdmin, error: fetchError } = await supabase.from("crm_admin").select("id, email, full_name").eq("id", validated.admin_id).maybeSingle();
-    if (fetchError) {
-      console.error("Error fetching admin:", fetchError.message);
-      return createErrorResponse(`Failed to fetch admin: ${fetchError.message}`, 500, "FETCH_ERROR");
-    }
-    if (!existingAdmin) {
-      return createErrorResponse("Admin not found", 404, "ADMIN_NOT_FOUND");
-    }
-    // Prepare update object
-    const updateData = {
-      updated_at: new Date().toISOString()
-    };
-    let emailChanged = false;
-    let oldEmail = existingAdmin.email;
-    let newEmail = oldEmail;
-    // Handle email update
-    if (validated.email) {
-      const normalizedEmail = validated.email.trim().toLowerCase();
-      const oldNormalizedEmail = existingAdmin.email.trim().toLowerCase();
-      if (normalizedEmail !== oldNormalizedEmail) {
-        // Check if new email already exists (excluding current admin)
-        const { data: emailExists, error: emailCheckError } = await supabase.from("crm_admin").select("id").eq("email", normalizedEmail).neq("id", validated.admin_id).maybeSingle();
-        if (emailCheckError) {
-          console.error("Error checking email:", emailCheckError.message);
-          return createErrorResponse(`Failed to check email: ${emailCheckError.message}`, 500, "EMAIL_CHECK_ERROR");
+        if (error instanceof z.ZodError) {
+            return createValidationErrorResponse(error);
         }
-        if (emailExists) {
-          return createErrorResponse("Email already exists for another admin", 409, "EMAIL_EXISTS");
+        if (
+            error?.name === "JWTExpired" ||
+            error?.name === "JWSSignatureVerificationFailed"
+        ) {
+            return createErrorResponse("Invalid or expired Admin-Token", 401);
         }
-        updateData.email = normalizedEmail;
-        emailChanged = true;
-        newEmail = normalizedEmail;
-        console.log(`Email will be updated from ${oldNormalizedEmail} to ${normalizedEmail}`);
-      }
+        console.error("Unexpected error:", error);
+        return createErrorResponse("Internal server error", 500);
     }
-    // Handle full_name update
-    if (validated.full_name && validated.full_name !== existingAdmin.full_name) {
-      updateData.full_name = validated.full_name;
-      console.log(`Full name updated from ${existingAdmin.full_name} to ${validated.full_name}`);
-    }
-    // Check if there are actual changes to make
-    if (Object.keys(updateData).length === 1) {
-      // Only updated_at field
-      return new Response(JSON.stringify({
-        message: "No changes detected",
-        admin_id: validated.admin_id
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-    // Update admin data
-    const { data: updatedAdmin, error: updateError } = await supabase.from("crm_admin").update(updateData).eq("id", validated.admin_id).select("id, email, full_name, updated_at").single();
-    if (updateError) {
-      console.error("Error updating admin:", updateError.message);
-      return createErrorResponse(`Failed to update admin: ${updateError.message}`, 500, "UPDATE_ERROR");
-    }
-    console.log(`Admin ${validated.admin_id} updated successfully`);
-    // === SEND EMAIL IF EMAIL CHANGED ===
-    let emailResult = {
-      success: true,
-      error: null
-    };
-    if (emailChanged) {
-      emailResult = await sendEmailChangeNotification(oldEmail, newEmail, updatedAdmin.full_name);
-      if (!emailResult.success) {
-        console.warn(`Admin updated but email failed: ${emailResult.error}`);
-      }
-    }
-    return new Response(JSON.stringify({
-      message: "Admin updated successfully",
-      admin: updatedAdmin,
-      changes: {
-        email_changed: emailChanged,
-        full_name_changed: !!updateData.full_name
-      },
-      email_sent: emailChanged ? emailResult.success : null,
-      email_error: emailChanged ? emailResult.error : null
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return createValidationErrorResponse(error);
-    }
-    if (error?.name === "JWTExpired" || error?.name === "JWSSignatureVerificationFailed") {
-      return createErrorResponse("Invalid or expired token", 401);
-    }
-    if (error?.code === "ERR_JWS_INVALID") {
-      return createErrorResponse("Invalid JWT format", 400);
-    }
-    console.error("Unexpected error:", error);
-    return createErrorResponse("Internal server error", 500);
-  }
 });

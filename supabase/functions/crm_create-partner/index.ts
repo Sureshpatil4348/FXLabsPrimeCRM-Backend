@@ -7,7 +7,7 @@ import { genSaltSync, hashSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts"
 const SENDGRID_API_KEY = Deno.env.get("CRM_SENDGRID_API_KEY");
 const FROM_EMAIL = Deno.env.get("CRM_FROM_EMAIL");
 const FROM_NAME = Deno.env.get("CRM_FROM_NAME");
-const LOGIN_URL = "https://fxlabsprime-crm.netlify.app/login/partner";
+const LOGIN_URL = "https://crm.fxlabsprime.com/login/partner";
 // ============================================
 // Utility: Generate random 8-character alphanumeric password
 function generatePassword() {
