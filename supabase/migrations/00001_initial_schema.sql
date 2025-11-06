@@ -53,3 +53,6 @@ CREATE TABLE public.crm_user_metadata (
   CONSTRAINT crm_user_metadata_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT crm_user_metadata_crm_partner_id_fkey FOREIGN KEY (crm_partner_id) REFERENCES public.crm_partner(id)
 );
+
+ALTER TABLE public.crm_user_metadata
+ADD COLUMN is_blocked boolean NOT NULL DEFAULT false;
