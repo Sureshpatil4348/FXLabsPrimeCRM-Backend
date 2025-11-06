@@ -54,7 +54,12 @@ const updateUserSchema = z.object({
         message: "Region must be 'India' or 'International'"
       })
   }).optional(),
-  subscription_ends_at: z.string().datetime("Invalid datetime format").optional()
+  subscription_ends_at: z.string().datetime("Invalid datetime format").optional(),
+  is_blocked: z.boolean({
+    errorMap: ()=>({
+        message: "is_blocked must be a boolean"
+      })
+  }).optional()
 });
 serve(async (req)=>{
   if (req.method !== "PATCH" && req.method !== "PUT") {
@@ -91,12 +96,12 @@ serve(async (req)=>{
     }
     const validated = updateUserSchema.parse(body);
     // Check if at least one field to update is provided
-    if (!validated.email && !validated.region && !validated.subscription_ends_at) {
+    if (!validated.email && !validated.region && !validated.subscription_ends_at && validated.is_blocked === undefined) {
       return createErrorResponse("At least one field must be provided for update", 400, "NO_FIELDS_TO_UPDATE");
     }
     console.log(`Processing update for user_id: ${validated.user_id}`);
     // Fetch existing user metadata
-    const { data: existingUser, error: fetchError } = await supabase.from("crm_user_metadata").select("user_id, email, region, subscription_ends_at").eq("user_id", validated.user_id).maybeSingle();
+    const { data: existingUser, error: fetchError } = await supabase.from("crm_user_metadata").select("user_id, email, region, subscription_ends_at, is_blocked").eq("user_id", validated.user_id).maybeSingle();
     if (fetchError) {
       console.error("Error fetching user:", fetchError.message);
       return createErrorResponse(`Failed to fetch user: ${fetchError.message}`, 500, "FETCH_ERROR");
@@ -150,6 +155,11 @@ serve(async (req)=>{
         console.log(`Subscription end date updated from ${existingUser.subscription_ends_at} to ${validated.subscription_ends_at}`);
       }
     }
+    // Handle is_blocked update
+    if (validated.is_blocked !== undefined && validated.is_blocked !== existingUser.is_blocked) {
+      updateData.is_blocked = validated.is_blocked;
+      console.log(`User block status updated from ${existingUser.is_blocked} to ${validated.is_blocked}`);
+    }
     // Check if there are actual changes to make
     if (Object.keys(updateData).length === 1) {
       // Only updated_at field
@@ -164,7 +174,7 @@ serve(async (req)=>{
       });
     }
     // Update user metadata
-    const { data: updatedUser, error: updateError } = await supabase.from("crm_user_metadata").update(updateData).eq("user_id", validated.user_id).select("user_id, email, region, subscription_ends_at, updated_at").single();
+    const { data: updatedUser, error: updateError } = await supabase.from("crm_user_metadata").update(updateData).eq("user_id", validated.user_id).select("user_id, email, region, subscription_ends_at, is_blocked, updated_at").single();
     if (updateError) {
       console.error("Error updating user metadata:", updateError.message);
       return createErrorResponse(`Failed to update user: ${updateError.message}`, 500, "UPDATE_ERROR");
@@ -176,7 +186,8 @@ serve(async (req)=>{
       changes: {
         email_changed: emailChanged,
         region_changed: !!updateData.region,
-        subscription_extended: !!updateData.subscription_ends_at
+        subscription_extended: !!updateData.subscription_ends_at,
+        block_status_changed: updateData.is_blocked !== undefined
       }
     }), {
       status: 200,

@@ -78,7 +78,7 @@ serve(async (req)=>{
     const totalRevenue = revenueData?.reduce((sum, payment)=>sum + Number(payment.amount), 0) || 0;
     const lastMonthRevenue = revenueData?.filter((payment)=>new Date(payment.paid_at) >= oneMonthAgo).reduce((sum, payment)=>sum + Number(payment.amount), 0) || 0;
     // 2. Get user stats
-    const { data: userData, error: userError } = await supabase.from("crm_user_metadata").select("subscription_status, region, created_at");
+    const { data: userData, error: userError } = await supabase.from("crm_user_metadata").select("subscription_status, region, created_at, is_blocked");
     if (userError) {
       console.error("User fetch error:", userError);
       throw new Error("Failed to fetch user data");
@@ -88,6 +88,7 @@ serve(async (req)=>{
     const totalPaid = userData?.filter((u)=>u.subscription_status === "paid").length || 0;
     const totalExpired = userData?.filter((u)=>u.subscription_status === "expired").length || 0;
     const totalActive = totalUsers - totalExpired;
+    const totalBlocked = userData?.filter((u)=>u.is_blocked === true).length || 0;
     const recentSignups = userData?.filter((u)=>new Date(u.created_at) >= oneMonthAgo).length || 0;
     // Initialize all regions with 0
     const totalUsersByRegion = {
@@ -167,6 +168,7 @@ serve(async (req)=>{
         total_paid: totalPaid,
         total_active: totalActive,
         total_expired: totalExpired,
+        total_blocked: totalBlocked,
         total_users_by_region: totalUsersByRegion,
         recent_users_30_days: recentSignups
       },

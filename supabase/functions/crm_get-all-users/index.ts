@@ -99,6 +99,7 @@ serve(async (req)=>{
         stripe_customer_id,
         converted_at,
         created_at,
+        is_blocked,
         crm_partner:crm_partner_id(email, full_name)
       `, {
       count: "exact"
@@ -149,6 +150,7 @@ serve(async (req)=>{
         total_spent: Number(totalSpent.toFixed(2)),
         converted_at: user.converted_at,
         created_at: user.created_at,
+        is_blocked: user.is_blocked,
         partner: user.crm_partner ? {
           email: user.crm_partner.email,
           full_name: user.crm_partner.full_name

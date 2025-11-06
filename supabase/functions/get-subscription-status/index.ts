@@ -47,8 +47,8 @@ serve(async (req)=>{
     }
     // Use user.id from JWT (no request body needed)
     const userId = user.id;
-    // Query crm_user_metadata for subscription info
-    const { data: metadata, error: dbError } = await supabaseClient.from("crm_user_metadata").select("subscription_status, subscription_ends_at").eq("user_id", userId).single();
+    // Query crm_user_metadata for subscription info and block status
+    const { data: metadata, error: dbError } = await supabaseClient.from("crm_user_metadata").select("subscription_status, subscription_ends_at, is_blocked").eq("user_id", userId).single();
     if (dbError) {
       console.error("Database error:", dbError);
       return new Response(JSON.stringify({
@@ -73,8 +73,21 @@ serve(async (req)=>{
         }
       });
     }
-    // Get current subscription status
-    const { subscription_status, subscription_ends_at } = metadata;
+    // Get current subscription status and block status
+    const { subscription_status, subscription_ends_at, is_blocked } = metadata;
+    // Check if user is blocked - return expired immediately
+    if (is_blocked) {
+      console.log(`User ${userId} is blocked - returning expired status`);
+      return new Response(JSON.stringify({
+        subscription_status: "expired"
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
+        }
+      });
+    }
     const now = new Date();
     // Step 1: If already "expired", return immediately
     if (subscription_status === "expired") {
