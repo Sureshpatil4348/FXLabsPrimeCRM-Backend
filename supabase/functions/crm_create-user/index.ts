@@ -122,7 +122,20 @@ function createEmailTemplate(email, password, trialDays) {
           <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:90%; background-color:#ffffff; border-radius:12px; padding:30px;">
             <tr>
               <td>
-                <h2 style="margin:0 0 12px; color:#111;">Welcome to FxLabs Prime</h2>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 12px;">
+                  <tr>
+                    <td align="center" style="padding:0;">
+                      <table role="presentation" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td align="center" style="font-size:48px; font-weight:bold; color:#04af47; line-height:1.2; padding:0;">WELCOME</td>
+                        </tr>
+                        <tr>
+                          <td align="center" style="font-size:24px; color:#04af47; line-height:1.2; padding:0;">Pro trader</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
                 <p style="margin:0 0 16px;">
                   You have been added to <strong>FxLabs Prime</strong>. Your trial period ends in <strong>${trialDays} days</strong>.
                 </p>
