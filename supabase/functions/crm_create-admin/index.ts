@@ -103,10 +103,19 @@ function createValidationErrorResponse(zodError, status = 400) {
     </div>
 
     <!-- Header -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#07c05c; padding:16px 20px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;">
       <tr>
-        <td align="center" style="color:#fff; font-size:18px; font-weight:600;">
-          FxLabs Prime Admin Portal
+        <td align="center">
+          <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:90%; background:#07c05c; color:#ffffff; border-radius:12px; overflow:hidden; font-family:Arial,Helvetica,sans-serif;">
+            <tr>
+              <td style="padding:14px 16px;">
+                <span style="display:inline-block;vertical-align:middle;">
+                  <img src="https://hyajwhtkwldrmlhfiuwg.supabase.co/storage/v1/object/public/fxlabs-public/fxlabs_logo_white.png" width="18" height="18" alt="FxLabs Prime" style="vertical-align:middle;display:inline-block" />
+                </span>
+                <span style="display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;">FxLabs Prime</span>
+              </td>
+            </tr>
+          </table>
         </td>
       </tr>
     </table>
