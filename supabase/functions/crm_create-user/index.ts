@@ -136,9 +136,6 @@ function createEmailTemplate(email, password, trialDays) {
                     </td>
                   </tr>
                 </table>
-                <p style="margin:0 0 16px;">
-                  You have been added to <strong>FxLabs Prime</strong>. Your trial period ends in <strong>${trialDays} days</strong>.
-                </p>
 
                 <!-- Credentials Box -->
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0;">
@@ -158,7 +155,7 @@ function createEmailTemplate(email, password, trialDays) {
                         </tr>
                         <tr>
                           <td style="padding:8px 0; color:#555; font-weight:600;">Trial Period:</td>
-                          <td style="padding:8px 0; color:#111; font-weight:600;">${trialDays} days</td>
+                          <td style="padding:8px 0; color:#111;">${trialDays} days</td>
                         </tr>
                       </table>
                     </td>
@@ -172,25 +169,6 @@ function createEmailTemplate(email, password, trialDays) {
                   </a>
                 </p>
 
-                <!-- Important Notice -->
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff7e6; border:1px solid #ffd59e; border-radius:8px; margin:20px 0 0;">
-                  <tr>
-                    <td style="padding:14px 16px; font-size:14px; line-height:1.6; color:#663c00;">
-                      <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes. Go to <strong>Your Profile</strong> and update your password immediately.
-                    </td>
-                  </tr>
-                </table>
-
-                <!-- Support -->
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0 0;">
-                  <tr>
-                    <td style="padding:12px 16px; font-size:14px; line-height:1.6; color:#555;">
-                      <strong style="color:#111;">Need help?</strong> Message us on Telegram:
-                      <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none; font-weight:600;">@Fxlabs_prime</a>
-                    </td>
-                  </tr>
-                </table>
-
               </td>
             </tr>
           </table>
@@ -202,19 +180,17 @@ function createEmailTemplate(email, password, trialDays) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px; padding:20px 0;">
       <tr>
         <td align="center" style="font-size:12px; color:#555; line-height:1.6; max-width:600px; padding:0 20px;">
-          FxLabs Prime provides automated market insights and notifications for informational and educational purposes only.
-          Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade.
-          Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment.
-          Data may be delayed or inaccurate; FxLabs Prime assumes no responsibility for any trading losses.
-          Always verify information independently and comply with your local laws and regulations before acting on any signal.
-          Use of this service implies acceptance of our
-          <a href="https://fxlabsprime.com/terms-of-service" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Terms of Service</a>
-          and
-          <a href="https://fxlabsprime.com/privacy-policy" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Privacy Policy</a>.
-          <br/><br/>
-          Need help? Chat with us on Telegram:
-          <a href="https://t.me/Fxlabs_prime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">@Fxlabs_prime</a>
-        </td>
+        FxLabs Prime offers market insights for informational and educational use only.  
+        This is not financial advice or an offer to trade. Forex, CFD, and crypto trading involve high risk.  
+        Data may be delayed or inaccurate; FxLabs Prime is not liable for any losses.  
+        By using this service, you agree to our 
+        <a href="https://fxlabsprime.com/terms-of-service" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Terms of Service</a> 
+        and 
+        <a href="https://fxlabsprime.com/privacy-policy" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">Privacy Policy</a>.  
+        <br/><br/>
+        Join us on Telegram community: 
+        <a href="https://t.me/fxlabsprime" target="_blank" rel="noopener noreferrer" style="color:#07c05c; text-decoration:none;">@fxlabsprime</a>
+      </td>
       </tr>
     </table>
   </body>
