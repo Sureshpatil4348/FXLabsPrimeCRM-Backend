@@ -138,9 +138,9 @@ function createEmailTemplate(email, password, trialDays) {
                 </table>
 
                 <!-- Credentials Box -->
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb; border:1px solid #e6e7ec; border-radius:8px; margin:16px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:2px solid #04af47; border-radius:12px; margin:16px 0; box-shadow:0 4px 8px rgba(0,0,0,0.1);">
                   <tr>
-                    <td style="padding:20px; font-size:14px; line-height:1.6;">
+                    <td style="padding:24px; font-size:14px; line-height:1.6;">
                       <strong style="color:#111; font-size:15px;">Your Login Credentials</strong>
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
                         <tr>
