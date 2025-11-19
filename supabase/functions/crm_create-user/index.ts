@@ -125,14 +125,8 @@ function createEmailTemplate(email, password, trialDays) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 12px;">
                   <tr>
                     <td align="center" style="padding:0;">
-                      <table role="presentation" cellpadding="0" cellspacing="0">
-                        <tr>
-                          <td align="center" style="font-size:48px; font-weight:bold; color:#04af47; line-height:1.2; padding:0;">WELCOME</td>
-                        </tr>
-                        <tr>
-                          <td align="center" style="font-size:24px; color:#04af47; line-height:1.2; padding:0;">Pro trader</td>
-                        </tr>
-                      </table>
+                      <span style="font-size:32px; font-weight:bold; color:#04af47; line-height:1.2;">WELCOME</span>
+                      <span style="font-size:32px; color:#04af47; line-height:1.2; margin-left:8px;">Pro trader</span>
                     </td>
                   </tr>
                 </table>
